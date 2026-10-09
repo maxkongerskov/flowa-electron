@@ -1,0 +1,63 @@
+appId: com.maxkongerskov.FlowaElectron
+productName: Flowa
+copyright: Copyright © 2026 Max Køngerskov
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**
+  - package.json
+extraResources:
+  - from: resources
+    to: assets
+    filter: ['icon.png', 'tray/**']
+  - from: resources/bin/${platform}-${arch}
+    to: bin
+  - from: resources/mac
+    to: mac
+  # The 1.6 GB speech model is NOT bundled by default: the app finds it in
+  # <appData>/Flowa-Electron/models/ (first-run download, or move models/*.bin there).
+  # To ship it inside the installer instead, uncomment:
+  # - from: models
+  #   to: models
+  #   filter: ['*.bin']
+asarUnpack: []
+mac:
+  category: public.app-category.productivity
+  icon: build/icon.icns
+  # Same compiled AppIcon as Swift-Flowa (scripts/build-mac-icons.sh) → identical Finder/Dock rendering.
+  extraResources:
+    - from: build/mac/Assets.car
+      to: Assets.car
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  minimumSystemVersion: '12.0'
+  extendInfo:
+    CFBundleIconName: AppIcon
+    NSMicrophoneUsageDescription: Flowa uses your microphone to transcribe your speech locally.
+    NSAppleEventsUsageDescription: Flowa uses Apple Events to paste your transcribed text into other apps.
+  notarize: false # set true + APPLE_* env vars (team 6LZ2DS9JPD) when releasing
+dmg:
+  background: build/dmg_background.png
+  window: { width: 540, height: 380 }
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch: [x64, arm64]
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  artifactName: Flowa-Setup-${version}-${arch}.${ext}
+linux:
+  icon: build/icon.png
+  category: Utility
+  target: [AppImage, deb]
+  synopsis: Local voice dictation
+  maintainer: Max Køngerskov
+deb:
+  recommends: [xdotool]

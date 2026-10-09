@@ -1,0 +1,18 @@
+html, body, #root { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+body { user-select: none; cursor: default; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; }
+.pill {
+  box-sizing: border-box;
+  height: 44px; width: 220px;
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  border-radius: 22px;
+  background: rgba(0, 0, 0, 0.88);
+  opacity: 0;
+  transition: opacity 0.14s ease-in;
+}
+.pill.visible { opacity: 1; transition: none; }
+.circle { width: 22px; height: 22px; border-radius: 11px; border: 0; padding: 0; display: flex; align-items: center; justify-content: center; flex: none; }
+.cancel { background: rgba(255, 255, 255, 0.14); color: rgba(255, 255, 255, 0.75); }
+.commit { background: #fff; color: #000; }
+.bars { flex: 1; display: flex; align-items: center; justify-content: center; gap: 3px; height: 28px; }
+.bars span { width: 2px; border-radius: 1px; background: rgba(255, 255, 255, 0.65); transition: height 0.08s ease-out; }
