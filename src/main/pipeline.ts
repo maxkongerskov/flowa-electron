@@ -13,12 +13,22 @@ import crypto from 'node:crypto'
 import type { CaptureResult, CaptureStartRequest } from '@shared/types'
 import { insertingRecent, newDictation, recentLimit, type Dictation } from '@shared/recent'
 import { appearsSilent } from '@shared/audioMath'
-import { encodeWav16 } from '@shared/wav'
+import { decodeWav16, encodeWav16 } from '@shared/wav'
 import { machineNoun, maxDurationStoppedMessage, modelNotReadyMessage, silenceMessage } from '@shared/status'
 import { maxDurationSeconds, PrefKey } from '@shared/prefs'
 import { Transcriber } from './transcriber'
 import { paste, type TargetApp } from './textInserter'
 import { loadRecent, prefs, saveRecent } from './store'
+
+/**
+ * E2E-only: FLOWA_DEBUG=1 FLOWA_DEBUG_FIXTURE=/abs/file.wav makes commit() transcribe that
+ * WAV instead of the mic take. Needs both env vars (set via `open --env`), so it can't
+ * trigger in normal use.
+ */
+export function debugFixturePath(env: NodeJS.ProcessEnv = process.env): string | null {
+  const f = env.FLOWA_DEBUG_FIXTURE?.trim()
+  return env.FLOWA_DEBUG === '1' && f && path.isAbsolute(f) && fs.existsSync(f) ? f : null
+}
 
 export interface CaptureBridge {
   start(req: CaptureStartRequest): Promise<{ ok: true } | { ok: false; message: string }>
@@ -102,7 +112,14 @@ export class DictationPipeline extends EventEmitter {
   async commit(language: string | null): Promise<void> {
     const gen = this.generation
     const maxMinutes = prefs.get(PrefKey.maxDurationMinutes)
-    const result = await this.capture.stop(gen)
+    let result = await this.capture.stop(gen)
+    const fixture = debugFixturePath()
+    if (fixture) {
+      // E2E debug path: replace the mic take with a known WAV (paste path unchanged).
+      const wav = decodeWav16(new Uint8Array(fs.readFileSync(fixture)))
+      result = { ...result, samples: wav.samples, peak: 1 }
+      console.log(`[Flowa][debug] using fixture ${fixture} (${wav.samples.length} samples)`)
+    }
     const target = this.sessionTarget
     this.sessionTarget = null
 
@@ -163,6 +180,10 @@ export class DictationPipeline extends EventEmitter {
               ? 'Transcript is on the clipboard (install xdotool or wtype for auto-paste).'
               : 'Transcript is on the clipboard (Accessibility is off for auto-paste).'
         }
+      } else if (outcome.kind === 'clipboardOnly' && outcome.reason === 'targetNotFrontmost') {
+        this.lastErrorMessage = `Transcript is on the clipboard — ${target?.name ?? 'the target app'} wasn't in front, so Flowa didn't paste.`
+      } else if (outcome.kind === 'clipboardOnly' && outcome.reason === 'pasteFailed') {
+        this.lastErrorMessage = 'Transcript is on the clipboard — auto-paste failed. Press ⌘V to paste.'
       } else if (outcome.kind === 'failed') {
         this.lastErrorMessage = "Couldn't copy the transcript to the clipboard."
       }

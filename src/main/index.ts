@@ -362,6 +362,12 @@ async function main(): Promise<void> {
   console.log(
     `[Flowa] launched. mic=${permissions.state.microphone} im=${permissions.state.inputMonitoring} ax=${permissions.state.accessibility} loginItem=${launchAtLogin}`
   )
+  if (process.platform === 'darwin') {
+    // Diagnostics: is the helper (which posts ⌘V) itself trusted for Accessibility?
+    void import('./macHelper').then(async (m) => {
+      if (m.macHelperAvailable()) console.log(`[Flowa] helper accessibility=${(await m.helper(['check-ax'])).out}`)
+    })
+  }
   pipeline.prewarm()
   broadcast()
   void runSelfTest(pipeline, bar)

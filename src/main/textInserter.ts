@@ -27,7 +27,7 @@ export interface TargetApp {
 
 export type PasteOutcome =
   | { kind: 'pasted'; appName: string | null }
-  | { kind: 'clipboardOnly' }
+  | { kind: 'clipboardOnly'; reason?: string }
   | { kind: 'accessibilityMissing' }
   | { kind: 'failed' }
 
@@ -122,17 +122,24 @@ export async function paste(text: string, target: TargetApp | null): Promise<Pas
   if (!target) return { kind: 'clipboardOnly' }
   if (!accessibilityGranted()) return { kind: 'accessibilityMissing' }
 
-  let ok = false
-  if (process.platform === 'darwin') ok = await pasteMac(target)
-  else if (process.platform === 'win32') ok = await pasteWindows(target)
-  else ok = await pasteLinux(target)
+  if (process.platform === 'darwin') return pasteMac(target)
+  const ok = process.platform === 'win32' ? await pasteWindows(target) : await pasteLinux(target)
   return ok ? { kind: 'pasted', appName: target.name } : { kind: 'clipboardOnly' }
 }
 
-async function pasteMac(t: TargetApp): Promise<boolean> {
+/** Map flowa-helper `paste` exit code + output to an outcome (exported for tests). */
+export function helperPasteOutcome(code: number, out: string, appName: string | null): PasteOutcome {
+  if (code === 0 && out.startsWith('pasted')) return { kind: 'pasted', appName }
+  if (code === 4 || out.startsWith('accessibility-missing')) return { kind: 'accessibilityMissing' }
+  if (out.startsWith('not-frontmost') || out.startsWith('target-gone')) return { kind: 'clipboardOnly', reason: 'targetNotFrontmost' }
+  return { kind: 'clipboardOnly', reason: 'pasteFailed' }
+}
+
+async function pasteMac(t: TargetApp): Promise<PasteOutcome> {
   if (macHelperAvailable()) {
-    const r = await helper(t.pid ? ['paste', String(t.pid)] : ['paste'])
-    return r.code === 0
+    const r = await helper(t.pid ? ['paste', String(t.pid)] : ['paste'], 6000)
+    console.log(`[Flowa][paste] helper code=${r.code} out=${JSON.stringify(r.out)} target=${t.name ?? '?'} pid=${t.pid ?? '-'}`)
+    return helperPasteOutcome(r.code, r.out, t.name)
   }
   const lines: string[] = []
   if (t.name) {
@@ -140,7 +147,7 @@ async function pasteMac(t: TargetApp): Promise<boolean> {
   }
   lines.push('tell application "System Events" to keystroke "v" using command down')
   const r = await run('/usr/bin/osascript', ['-e', lines.join('\n')])
-  return r.code === 0
+  return r.code === 0 ? { kind: 'pasted', appName: t.name } : { kind: 'clipboardOnly', reason: 'pasteFailed' }
 }
 
 async function pasteWindows(t: TargetApp): Promise<boolean> {
