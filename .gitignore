@@ -29,3 +29,11 @@ build/helper/
 build/mac/
 build/icon.icns
 .e2e/
+
+# Local verification screenshots (personal desktop/dock)
+docs/icon-check/
+docs/screenshots/diag-now.png
+docs/screenshots/installed-window.png
+
+# Old release builds moved aside by scripts/build-release.sh
+release.prev-*/
