@@ -10,6 +10,20 @@ pipeline logic and decoding settings.
 
 ---
 
+## System requirements
+
+Flowa bundles the Whisper large-v3 turbo model (1.6 GB) and transcribes locally, so it needs a reasonably capable machine.
+
+| | Minimum | Recommended |
+|---|---|---|
+| **RAM** | 16 GB | 32 GB |
+| **CPU** | Modern 4-core 64-bit CPU (x64 needs AVX2, roughly 2013 or newer) | 8+ cores, or Apple Silicon (M1 or newer) |
+| **GPU** | Not required | Apple Silicon with Metal for the fastest transcription |
+| **Disk** | 4 GB free | 8 GB free |
+| **OS** | macOS 12+, Windows 10/11 (64-bit), Ubuntu 22.04+ or similar | Latest macOS on Apple Silicon |
+
+The macOS Apple Silicon build uses the GPU via Metal. The current Windows and Linux builds run the speech engine on the CPU; CUDA acceleration is not bundled yet. Linux also needs `libgomp1`.
+
 ## Quick start (local test)
 
 Requirements: Node 20+, git, cmake, a C/C++ toolchain (macOS: Xcode Command Line Tools ·
