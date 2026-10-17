@@ -35,12 +35,16 @@ export interface PermissionsState {
 }
 
 export interface ShortcutState {
-  /** 'fn' or an Electron accelerator string. */
+  /** 'fn', a modifier token such as 'RightAlt', or an Electron accelerator. */
   accelerator: string
-  /** Human label, e.g. "fn" or "Ctrl+Shift+Space". */
+  /** Human label, e.g. "fn", "F8", or "Ctrl+Shift+Space". */
   label: string
   usesFn: boolean
+  /** How the shortcut is registered. */
+  kind: 'fn' | 'modifier' | 'accelerator'
   active: boolean
+  /** Bumped when the tray/app menu asks the settings UI to record a shortcut. */
+  recordNonce: number
 }
 
 export interface EngineInfo {

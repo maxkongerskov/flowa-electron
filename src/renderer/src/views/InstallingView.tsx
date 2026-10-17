@@ -11,7 +11,7 @@ export function tips(noun: string, key: string, mac: boolean): string[] {
     'Works in Notes, Mail, chat apps, browsers, and code editors.',
     mac && key === 'fn'
       ? 'In Keyboard settings, set \u201CPress \uD83C\uDF10 key to\u201D to Do Nothing so fn stays free for Flowa.'
-      : 'You can change the shortcut anytime from Home.',
+      : 'You can change the shortcut anytime from Home or the menu.',
     'You can switch languages anytime from Home — Flowa keeps up mid-sentence.',
     `Recent dictations stay on this ${noun} so you can copy them later.`
   ]

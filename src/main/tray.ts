@@ -3,15 +3,21 @@
 import { Menu, nativeImage, Tray } from 'electron'
 import path from 'node:path'
 import type { TrayIconName } from '@shared/status'
+import { dictationShortcutMenu } from './shortcutMenu'
 import { paths } from './paths'
 
 export interface TrayModel {
   icon: TrayIconName
   statusText: string
+  shortcut: string
+  platform: string
   onShow: () => void
   onReinstall: () => void
   onRepair: () => void
   onQuit: () => void
+  onShortcut: (shortcut: string) => void
+  onRecordShortcut: () => void
+  onResetShortcut: () => void
 }
 
 const fileFor: Record<TrayIconName, string> = {
@@ -41,7 +47,7 @@ export class FlowaTray {
   }
 
   update(m: TrayModel): void {
-    const key = `${m.icon}|${m.statusText}`
+    const key = `${m.icon}|${m.statusText}|${m.shortcut}`
     if (key === this.last) return
     this.last = key
     this.tray.setImage(image(m.icon))
@@ -50,6 +56,14 @@ export class FlowaTray {
         { label: 'Show Flowa', accelerator: 'CommandOrControl+0', click: m.onShow },
         { type: 'separator' },
         { label: m.statusText, enabled: false },
+        { type: 'separator' },
+        dictationShortcutMenu({
+          current: m.shortcut,
+          platform: m.platform,
+          onSelect: m.onShortcut,
+          onRecord: m.onRecordShortcut,
+          onReset: m.onResetShortcut
+        }),
         { type: 'separator' },
         { label: 'Re-run Installation…', click: m.onReinstall },
         { label: 'Repair Flowa…', click: m.onRepair },

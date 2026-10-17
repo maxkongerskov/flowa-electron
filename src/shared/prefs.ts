@@ -2,6 +2,10 @@
 // preference keys and pure helpers. Keys are kept identical to the Swift
 // app's UserDefaults keys so settings could be migrated 1:1.
 
+import { defaultShortcut, FN_SHORTCUT, migratedShortcut } from './shortcut'
+
+export { FN_SHORTCUT, defaultShortcut }
+
 export const PrefKey = {
   language: 'flowa.language',
   microphone: 'flowa.microphone',
@@ -10,7 +14,7 @@ export const PrefKey = {
   firstRunComplete: 'flowa.firstRunComplete',
   /** Integer minutes. Default / recommended hard limit: 60. 0 = no limit. */
   maxDurationMinutes: 'flowa.maxDurationMinutes',
-  /** Electron-only: global shortcut accelerator used where fn is unavailable. */
+  /** Dictation toggle. `fn`, a modifier tapped alone, or an Electron accelerator. */
   shortcut: 'flowa.shortcut'
 } as const
 
@@ -26,13 +30,6 @@ export interface Prefs {
 
 /** Recommended hard limit for stability (minutes). Used as the default. */
 export const recommendedMaxDurationMinutes = 60
-
-/** Sentinel meaning "use the platform's fn key" (macOS helper). */
-export const FN_SHORTCUT = 'fn'
-
-export function defaultShortcut(platform: NodeJS.Platform | string): string {
-  return platform === 'darwin' ? FN_SHORTCUT : 'Control+Shift+Space'
-}
 
 export function defaultPrefs(platform: NodeJS.Platform | string): Prefs {
   return {
@@ -94,6 +91,7 @@ export function coercePrefs(raw: unknown, platform: NodeJS.Platform | string): P
   const r = raw as Record<string, unknown>
   const str = (k: keyof Prefs, fb: string): string => (typeof r[k] === 'string' ? (r[k] as string) : fb)
   const bool = (k: keyof Prefs, fb: boolean): boolean => (typeof r[k] === 'boolean' ? (r[k] as boolean) : fb)
+  const hasOtherPrefs = Object.keys(r).some((k) => k !== PrefKey.shortcut)
   return {
     [PrefKey.language]: str(PrefKey.language, d[PrefKey.language]),
     [PrefKey.microphone]: str(PrefKey.microphone, d[PrefKey.microphone]),
@@ -101,6 +99,6 @@ export function coercePrefs(raw: unknown, platform: NodeJS.Platform | string): P
     [PrefKey.onboardingComplete]: bool(PrefKey.onboardingComplete, d[PrefKey.onboardingComplete]),
     [PrefKey.firstRunComplete]: bool(PrefKey.firstRunComplete, d[PrefKey.firstRunComplete]),
     [PrefKey.maxDurationMinutes]: readMaxDurationMinutes(r[PrefKey.maxDurationMinutes]),
-    [PrefKey.shortcut]: str(PrefKey.shortcut, d[PrefKey.shortcut])
+    [PrefKey.shortcut]: migratedShortcut(r[PrefKey.shortcut], hasOtherPrefs, platform)
   }
 }

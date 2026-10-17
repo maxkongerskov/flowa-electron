@@ -3,7 +3,7 @@
 
 import fs from 'node:fs'
 import { EventEmitter } from 'node:events'
-import { coercePrefs, type Prefs } from '@shared/prefs'
+import { coercePrefs, PrefKey, type Prefs } from '@shared/prefs'
 import { decodeRecent, encodeRecent, type Dictation } from '@shared/recent'
 import { paths, writeFileAtomic } from './paths'
 
@@ -13,12 +13,26 @@ class PrefsStore extends EventEmitter {
   get all(): Prefs {
     if (!this.data) {
       let raw: unknown = null
+      let hadFile = false
       try {
         raw = JSON.parse(fs.readFileSync(paths.prefs, 'utf8'))
+        hadFile = true
       } catch {
         raw = null
       }
       this.data = coercePrefs(raw, process.platform)
+      // Persist a migrated shortcut so an upgrade doesn't keep re-deriving it,
+      // and so the 1.1.0 default stays put when the new-install default changes.
+      if (hadFile && raw && typeof raw === 'object') {
+        const stored = (raw as Record<string, unknown>)[PrefKey.shortcut]
+        if (stored !== this.data[PrefKey.shortcut]) {
+          try {
+            writeFileAtomic(paths.prefs, JSON.stringify(this.data, null, 2))
+          } catch (e) {
+            console.error('[Flowa] prefs migrate failed', e)
+          }
+        }
+      }
     }
     return this.data
   }

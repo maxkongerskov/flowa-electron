@@ -46,6 +46,10 @@ dmg:
   window: { width: 540, height: 380 }
 win:
   icon: build/icon.ico
+  # Modifier-only shortcuts (Right Alt, …). A script, so it cross-builds with NSIS.
+  extraResources:
+    - from: resources/win
+      to: win
   target:
     - target: nsis
       arch: [x64, arm64]
