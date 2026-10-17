@@ -28,13 +28,13 @@ The macOS Apple Silicon build uses the GPU via Metal. The current Windows and Li
 
 | Platform | Variant | Installer | Size |
 |---|---|---|---|
-| macOS | Apple Silicon (M1 and later) | [Flowa-1.1.0-arm64.dmg](https://github.com/maxkongerskov/flowa-electron/releases/download/v1.1.0/Flowa-1.1.0-arm64.dmg) | 1.5 GB |
-| macOS | Intel | [Flowa-1.1.0-x64.dmg](https://github.com/maxkongerskov/flowa-electron/releases/download/v1.1.0/Flowa-1.1.0-x64.dmg) | 1.5 GB |
-| Windows | 64-bit | [Flowa-Setup-1.1.0-x64.exe](https://github.com/maxkongerskov/flowa-electron/releases/download/v1.1.0/Flowa-Setup-1.1.0-x64.exe) | 1.4 GB |
-| Linux | AppImage, x86_64 | [Flowa-1.1.0.AppImage](https://github.com/maxkongerskov/flowa-electron/releases/download/v1.1.0/Flowa-1.1.0.AppImage) | 1.5 GB |
-| Linux | Debian/Ubuntu | [flowa_1.1.0_amd64.deb](https://github.com/maxkongerskov/flowa-electron/releases/download/v1.1.0/flowa_1.1.0_amd64.deb) | 1.5 GB |
+| macOS | Apple Silicon (M1 and later) | [Flowa-1.2.0-arm64.dmg](https://github.com/maxkongerskov/flowa-electron/releases/download/v1.2.0/Flowa-1.2.0-arm64.dmg) | 1.6 GB |
+| macOS | Intel | [Flowa-1.2.0-x64.dmg](https://github.com/maxkongerskov/flowa-electron/releases/download/v1.2.0/Flowa-1.2.0-x64.dmg) | 1.6 GB |
+| Windows | 64-bit | [Flowa-Setup-1.2.0-x64.exe](https://github.com/maxkongerskov/flowa-electron/releases/download/v1.2.0/Flowa-Setup-1.2.0-x64.exe) | 1.5 GB |
+| Linux | AppImage, x86_64 | [Flowa-1.2.0.AppImage](https://github.com/maxkongerskov/flowa-electron/releases/download/v1.2.0/Flowa-1.2.0.AppImage) | 1.6 GB |
+| Linux | Debian/Ubuntu | [flowa_1.2.0_amd64.deb](https://github.com/maxkongerskov/flowa-electron/releases/download/v1.2.0/flowa_1.2.0_amd64.deb) | 1.6 GB |
 
-All files for version 1.1.0 are on the [v1.1.0 release page](https://github.com/maxkongerskov/flowa-electron/releases/tag/v1.1.0).
+All files for version 1.2.0 are on the [v1.2.0 release page](https://github.com/maxkongerskov/flowa-electron/releases/tag/v1.2.0).
 
 ## Quick start (local test)
 
