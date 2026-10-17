@@ -7,6 +7,7 @@ import { inputsForPicker, type AudioInputDevice } from '@shared/micDeviceKind'
 import { filterRecent } from '@shared/recent'
 import { recentMeta } from '@shared/status'
 import { maxDurationMinutesFromField, recommendedMaxDurationMinutes } from '@shared/prefs'
+import { shortcutLimitNote } from '@shared/shortcut'
 import { ConflictBanner, ErrorBanner, PermissionBanner, StatusBanner } from '../components/Banners'
 import { DarkModeToggle, LanguagePicker, RecentRow, StatusPill } from '../components/HomeChrome'
 import { ShortcutField } from '../components/ShortcutField'
@@ -104,20 +105,29 @@ export function HomeView({ state: s }: { state: AppState }) {
           {s.conflict.kind === 'shortcutTaken' && (
             <StatusBanner
               severity="warning"
-              title="Shortcut is in use by another app"
-              detail={`Flowa couldn't register ${s.shortcut.label}. Click the Shortcut row below and choose another one.`}
+              title={s.shortcut.kind === 'modifier' ? `Couldn't listen for ${s.shortcut.label}` : 'Shortcut is in use by another app'}
+              detail={
+                s.shortcut.kind === 'modifier'
+                  ? `Flowa couldn't install the keyboard hook for ${s.shortcut.label}. Choose F8, or another combination, from the Shortcut row or the menu.`
+                  : `Flowa couldn't register ${s.shortcut.label}. Click Change on the Shortcut row, or pick another one from the menu.`
+              }
             />
           )}
           {perms.applicable.microphone && !perms.microphone && (
             <PermissionBanner title="Microphone access needed" detail="Without it, Flowa can't capture your voice." actionTitle="Grant" action={() => void f.action('requestMicrophone')} />
           )}
           {perms.applicable.inputMonitoring && !perms.inputMonitoring && (
-            <PermissionBanner title="Input Monitoring needed for the Fn key" detail="Without it, Flowa can't see when you press Fn." actionTitle="Open" action={() => void f.action('requestInputMonitoring')} />
-          )}
-          {s.shortcut.usesFn && perms.inputMonitoring && !s.shortcut.active && (
             <PermissionBanner
-              title="The Fn key isn't active yet"
-              detail="Input Monitoring is on, but Flowa hasn't started listening for Fn. Try again, or quit and reopen Flowa."
+              title={s.shortcut.usesFn ? 'Input Monitoring needed for the Fn key' : `Input Monitoring needed for ${s.shortcut.label}`}
+              detail={s.shortcut.usesFn ? "Without it, Flowa can't see when you press Fn." : `Without it, Flowa can't see ${s.shortcut.label} when another app is in front.`}
+              actionTitle="Open"
+              action={() => void f.action('requestInputMonitoring')}
+            />
+          )}
+          {(s.shortcut.usesFn || s.shortcut.kind === 'modifier') && perms.applicable.inputMonitoring && perms.inputMonitoring && !s.shortcut.active && s.conflict.kind !== 'shortcutTaken' && (
+            <PermissionBanner
+              title={s.shortcut.usesFn ? "The Fn key isn't active yet" : `${s.shortcut.label} isn't active yet`}
+              detail="Input Monitoring is on, but Flowa hasn't started listening. Try again, or quit and reopen Flowa."
               actionTitle="Try again"
               action={() => void f.action('reloadShortcut')}
             />
@@ -133,9 +143,15 @@ export function HomeView({ state: s }: { state: AppState }) {
 
           {/* Settings card */}
           <div className="card" style={{ padding: '0 16px', position: 'relative' }}>
-            <Row icon={Command} label="Shortcut">
-              <ShortcutField label={s.shortcut.label} usesFn={s.shortcut.usesFn} platform={s.platform} />
-            </Row>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '8px 0' }}>
+              <Command size={14} strokeWidth={2} color="var(--text-tertiary)" style={{ width: 16, flex: 'none', marginTop: 3 }} />
+              <span style={{ fontSize: 13, marginTop: 2 }}>Shortcut</span>
+              <div style={{ flex: 1, minWidth: 8 }} />
+              <ShortcutField label={s.shortcut.label} usesFn={s.shortcut.usesFn} platform={s.platform} recordNonce={s.shortcut.recordNonce} />
+            </div>
+            <div style={{ fontSize: 10, lineHeight: 1.4, color: 'var(--text-tertiary)', padding: '0 0 10px 28px' }}>
+              {shortcutLimitNote(s.platform)} You can also change it from the menu.
+            </div>
             <div className="hairline" />
             <Row icon={Globe} label="Language">
               <button onClick={() => setLanguagePickerOpen((v) => !v)} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -145,7 +161,7 @@ export function HomeView({ state: s }: { state: AppState }) {
             </Row>
             {languagePickerOpen && (
               <LanguagePicker
-                style={{ right: 6, top: 82 }}
+                style={{ right: 6, top: 128 }}
                 selected={p['flowa.language']}
                 onClose={() => setLanguagePickerOpen(false)}
                 onSelect={(code) => {

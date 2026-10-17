@@ -11,7 +11,8 @@ import type { PermissionsState } from '@shared/types'
 import { helper, macHelperAvailable } from './macHelper'
 import { commandExists } from './proc'
 import { prefs } from './store'
-import { PrefKey, FN_SHORTCUT } from '@shared/prefs'
+import { PrefKey } from '@shared/prefs'
+import { needsInputMonitoring } from '@shared/shortcut'
 
 export function linuxPasteTool(): string | null {
   const wayland = !!process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === 'wayland'
@@ -50,14 +51,14 @@ class PermissionChecker extends EventEmitter {
     if (process.platform === 'darwin') {
       next.microphone = systemPreferences.getMediaAccessStatus('microphone') === 'granted'
       next.accessibility = systemPreferences.isTrustedAccessibilityClient(false)
-      const usesFn = prefs.get(PrefKey.shortcut) === FN_SHORTCUT
-      next.applicable = { microphone: true, inputMonitoring: usesFn, accessibility: true }
-      if (usesFn && macHelperAvailable()) {
+      const needsWatch = needsInputMonitoring(prefs.get(PrefKey.shortcut), process.platform)
+      next.applicable = { microphone: true, inputMonitoring: needsWatch, accessibility: true }
+      if (needsWatch && macHelperAvailable()) {
         const r = await helper(['check-im'])
         next.inputMonitoring = r.out === 'granted'
       } else {
         // A plain accelerator (globalShortcut) needs no Input Monitoring.
-        next.inputMonitoring = !usesFn
+        next.inputMonitoring = !needsWatch
       }
     } else if (process.platform === 'win32') {
       const s = systemPreferences.getMediaAccessStatus('microphone')

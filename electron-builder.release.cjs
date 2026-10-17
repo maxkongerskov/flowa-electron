@@ -21,7 +21,7 @@ module.exports = {
   // Outside app.asar: whisper-server opens the file by path.
   extraResources: [...common, { from: 'models', to: 'models', filter: ['ggml-large-v3-turbo.bin'] }],
   mac: { ...base.mac, extraResources: [...(base.mac.extraResources || []), ...engine('darwin'), { from: 'resources/mac', to: 'mac' }] },
-  win: { ...base.win, extraResources: engine('win32') },
+  win: { ...base.win, extraResources: [...(base.win.extraResources || []), ...engine('win32')] },
   linux: { ...base.linux, extraResources: engine('linux') },
   // The official whisper.cpp Linux build links libgomp (OpenMP runtime).
   dmg: { ...base.dmg, artifactName: 'Flowa-${version}-${arch}.${ext}' },

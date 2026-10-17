@@ -44,6 +44,12 @@ export const paths = {
       ? path.join(process.resourcesPath, 'mac', 'flowa-helper')
       : path.join(app.getAppPath(), 'resources', 'mac', 'flowa-helper')
   },
+  /** Windows modifier-only hook (WH_KEYBOARD_LL). No compile step; shipped as text. */
+  get winModifierHook(): string {
+    return app.isPackaged
+      ? path.join(process.resourcesPath, 'win', 'modifier-hook.ps1')
+      : path.join(app.getAppPath(), 'resources', 'win', 'modifier-hook.ps1')
+  },
   get assets(): string {
     return app.isPackaged ? path.join(process.resourcesPath, 'assets') : path.join(app.getAppPath(), 'resources')
   }

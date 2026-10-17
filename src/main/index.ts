@@ -3,7 +3,8 @@
 
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, session, clipboard } from 'electron'
 import type { AppState } from '@shared/types'
-import { FN_SHORTCUT, PrefKey, normalizedMicrophoneUID, sanitizedMaxDurationMinutes, type Prefs } from '@shared/prefs'
+import { PrefKey, normalizedMicrophoneUID, sanitizedMaxDurationMinutes, type Prefs } from '@shared/prefs'
+import { defaultShortcut, needsInputMonitoring, shortcutKind, shortcutLabel, validateShortcut } from '@shared/shortcut'
 import { isEphemeralAggregateUID } from '@shared/micDeviceKind'
 import { allGranted, machineNoun, menuStatusText, trayIconName } from '@shared/status'
 import { languageDisplayName } from '@shared/languages'
@@ -13,7 +14,8 @@ import { prefs } from './store'
 import { permissions } from './permissions'
 import { fnConflict } from './fnConflict'
 import { DictationPipeline } from './pipeline'
-import { GlobalHotkey, acceleratorLabel } from './hotkey'
+import { GlobalHotkey } from './hotkey'
+import { dictationShortcutMenu } from './shortcutMenu'
 import { createMainWindow, FlowBar, pageBackground } from './windows'
 import { FlowaTray } from './tray'
 import { isLoginItemEnabled, setLoginItemEnabled } from './loginItem'
@@ -49,6 +51,8 @@ async function main(): Promise<void> {
   bar.onCancel = () => hotkey.cancelListening()
   bar.onCommit = () => hotkey.commitListening()
   let launchAtLogin = isLoginItemEnabled()
+  let recordNonce = 0
+  let menuKey = ''
 
   const showMain = (): void => {
     if (!mainWindow || mainWindow.isDestroyed()) {
@@ -62,7 +66,7 @@ async function main(): Promise<void> {
       })
       mainWindow.on('focus', () => {
         void permissions.check()
-        if (!hotkey.isAuthorized) void hotkey.restart()
+        if (!hotkey.suspended && !hotkey.isAuthorized) void hotkey.restart()
       })
     } else {
       if (mainWindow.isMinimized()) mainWindow.restore()
@@ -73,11 +77,41 @@ async function main(): Promise<void> {
   }
 
   const conflictStatus = (): AppState['conflict'] => {
-    if (!hotkey.usesFn && hotkey.accelerator && !hotkey.isAuthorized) {
+    const macModifierDenied = hotkey.kind === 'modifier' && needsInputMonitoring(hotkey.accelerator, process.platform) && !permissions.state.inputMonitoring
+    if (!hotkey.suspended && !hotkey.usesFn && hotkey.accelerator && !hotkey.isAuthorized && !macModifierDenied) {
       return { kind: 'shortcutTaken', accelerator: hotkey.accelerator }
     }
     return fnConflict.status
   }
+
+  const applyShortcut = async (value: unknown): Promise<{ ok: true } | { ok: false; message: string }> => {
+    if (typeof value !== 'string') return { ok: false, message: 'Press a key to use as the shortcut.' }
+    const verdict = validateShortcut(value, process.platform)
+    if (!verdict.ok) return verdict
+    const previous = prefs.get(PrefKey.shortcut)
+    if (previous !== verdict.shortcut) prefs.set(PrefKey.shortcut, verdict.shortcut as Prefs[typeof PrefKey.shortcut])
+    await hotkey.restart()
+    if (!hotkey.isAuthorized && previous !== verdict.shortcut && verdict.kind !== 'fn') {
+      console.warn('[Flowa] shortcut not registered:', verdict.shortcut)
+    }
+    void permissions.check()
+    void fnConflict.check()
+    return { ok: true }
+  }
+
+  const recordShortcut = (): void => {
+    recordNonce += 1
+    showMain()
+    broadcast()
+  }
+
+  const shortcutMenuArgs = () => ({
+    current: hotkey.accelerator || prefs.get(PrefKey.shortcut),
+    platform: process.platform,
+    onSelect: (shortcut: string) => void applyShortcut(shortcut),
+    onRecord: recordShortcut,
+    onReset: () => void applyShortcut(defaultShortcut(process.platform))
+  })
 
   const buildState = (): AppState => {
     const t = pipeline.transcriber
@@ -99,7 +133,14 @@ async function main(): Promise<void> {
       lastErrorMessage: pipeline.lastErrorMessage,
       recent: pipeline.recent,
       launchAtLogin,
-      shortcut: { accelerator: acc, label: acceleratorLabel(acc, process.platform), usesFn: acc === FN_SHORTCUT, active: hotkey.isAuthorized },
+      shortcut: {
+        accelerator: acc,
+        label: shortcutLabel(acc, process.platform),
+        usesFn: hotkey.usesFn || acc === 'fn',
+        kind: shortcutKind(acc),
+        active: hotkey.isAuthorized,
+        recordNonce
+      },
       engine: { modelName: swiftModelVariant, ...t.engineInfo }
     }
   }
@@ -145,7 +186,19 @@ async function main(): Promise<void> {
     app.quit()
   }
 
-  const tray = new FlowaTray({ icon: 'download', statusText: 'Starting…', onShow: showMain, onReinstall: confirmReinstall, onRepair: confirmRepair, onQuit: quit })
+  const tray = new FlowaTray({
+    icon: 'download',
+    statusText: 'Starting…',
+    shortcut: prefs.get(PrefKey.shortcut),
+    platform: process.platform,
+    onShow: showMain,
+    onReinstall: confirmReinstall,
+    onRepair: confirmRepair,
+    onQuit: quit,
+    onShortcut: (shortcut) => void applyShortcut(shortcut),
+    onRecordShortcut: recordShortcut,
+    onResetShortcut: () => void applyShortcut(defaultShortcut(process.platform))
+  })
 
   // Broadcast state (coalesced) to every renderer + refresh tray.
   let scheduled = false
@@ -172,12 +225,51 @@ async function main(): Promise<void> {
           isTranscribing: s.isTranscribing,
           keyLabel: s.shortcut.label
         }),
+        shortcut: s.shortcut.accelerator,
+        platform: s.platform,
         onShow: showMain,
         onReinstall: confirmReinstall,
         onRepair: confirmRepair,
-        onQuit: quit
+        onQuit: quit,
+        onShortcut: (shortcut) => void applyShortcut(shortcut),
+        onRecordShortcut: recordShortcut,
+        onResetShortcut: () => void applyShortcut(defaultShortcut(process.platform))
       })
+      const nextMenuKey = `${s.shortcut.accelerator}|${s.platform}`
+      if (nextMenuKey !== menuKey) {
+        menuKey = nextMenuKey
+        installAppMenu()
+      }
     })
+  }
+
+  const installAppMenu = (): void => {
+    const dictation = dictationShortcutMenu(shortcutMenuArgs())
+    if (process.platform === 'darwin') {
+      Menu.setApplicationMenu(
+        Menu.buildFromTemplate([
+          { role: 'appMenu' },
+          dictation,
+          { role: 'editMenu' },
+          { label: 'Window', submenu: [{ label: 'Show Flowa', accelerator: 'Command+0', click: showMain }, { role: 'minimize' }, { role: 'close' }] }
+        ])
+      )
+    } else {
+      // Hidden until Alt (autoHideMenuBar). The tray has the same items.
+      Menu.setApplicationMenu(
+        Menu.buildFromTemplate([
+          {
+            label: 'Flowa',
+            submenu: [
+              { label: 'Show Flowa', accelerator: 'CommandOrControl+0', click: showMain },
+              { type: 'separator' },
+              { label: 'Quit Flowa', accelerator: 'CommandOrControl+Q', click: quit }
+            ]
+          },
+          dictation
+        ])
+      )
+    }
   }
 
   pipeline.on('change', broadcast)
@@ -194,7 +286,7 @@ async function main(): Promise<void> {
     const im = permissions.state.inputMonitoring
     const flippedOn = im && !imWasGranted
     imWasGranted = im
-    if (im && hotkey.session === 'idle' && (flippedOn || !hotkey.isAuthorized)) {
+    if (!hotkey.suspended && im && hotkey.session === 'idle' && (flippedOn || !hotkey.isAuthorized)) {
       console.log(`[Flowa] Input Monitoring ${flippedOn ? 'granted' : 'available'} → restarting fn watcher`)
       void hotkey.restart()
     }
@@ -239,18 +331,7 @@ async function main(): Promise<void> {
         if (typeof value === 'number') prefs.set(key, sanitizedMaxDurationMinutes(value))
         break
       case PrefKey.shortcut:
-        if (typeof value === 'string' && value.length < 64) {
-          const previous = prefs.get(PrefKey.shortcut)
-          prefs.set(key, value as Prefs[typeof PrefKey.shortcut])
-          await hotkey.restart()
-          if (!hotkey.isAuthorized && previous !== value && value !== FN_SHORTCUT) {
-            // Couldn't register (taken / invalid): keep the user's choice visible via the banner.
-            console.warn('[Flowa] shortcut not registered:', value)
-          }
-          void permissions.check()
-          void fnConflict.check()
-        }
-        break
+        return applyShortcut(value)
     }
   })
 
@@ -306,7 +387,9 @@ async function main(): Promise<void> {
         ])
         menu.popup({ window: mainWindow ?? undefined, callback: () => setImmediate(() => resolve(chosen)) })
       }),
-    reloadShortcut: () => hotkey.restart()
+    reloadShortcut: () => hotkey.restart(),
+    suspendShortcut: () => hotkey.suspend(),
+    resumeShortcut: () => hotkey.resume()
   }
 
   ipcMain.handle('action', async (e, name: unknown, ...args: unknown[]) => {
@@ -317,18 +400,7 @@ async function main(): Promise<void> {
   // Bar renderer asks for current mic pref etc. via state as well.
   ipcMain.handle('bar:state', (e) => (e.sender === bar.win.webContents ? buildState() : null))
 
-  // MARK: App menu (macOS keeps standard App/Edit/Window menus; others hide the menu bar)
-  if (process.platform === 'darwin') {
-    Menu.setApplicationMenu(
-      Menu.buildFromTemplate([
-        { role: 'appMenu' },
-        { role: 'editMenu' },
-        { label: 'Window', submenu: [{ label: 'Show Flowa', accelerator: 'Command+0', click: showMain }, { role: 'minimize' }, { role: 'close' }] }
-      ])
-    )
-  } else {
-    Menu.setApplicationMenu(null)
-  }
+  installAppMenu()
 
   app.on('activate', showMain)
   app.on('second-instance', showMain)
@@ -355,7 +427,7 @@ async function main(): Promise<void> {
   launched = true
   // Safety net: if the fn watcher died (helper crash, tap revoked), bring it back.
   setInterval(() => {
-    if (hotkey.usesFn && permissions.state.inputMonitoring && !hotkey.isAuthorized && hotkey.session === 'idle') {
+    if (!hotkey.suspended && hotkey.needsMacNativeWatch && permissions.state.inputMonitoring && !hotkey.isAuthorized && hotkey.session === 'idle') {
       void hotkey.start()
     }
   }, 5000)

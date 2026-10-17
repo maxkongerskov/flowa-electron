@@ -50,7 +50,15 @@ describe('Preferences (Swift parity)', () => {
     expect(p['flowa.colorScheme.dark']).toBe(true)
     expect(p['flowa.maxDurationMinutes']).toBe(60)
     expect(p['flowa.shortcut']).toBe('fn')
-    expect(defaultShortcut('win32')).toBe('Control+Shift+Space')
+    expect(defaultShortcut('win32')).toBe('F8')
+    expect(defaultShortcut('linux')).toBe('F8')
+  })
+  it('keeps an upgraded Windows install on Ctrl+Shift+Space and a saved shortcut as-is', () => {
+    const existing = coercePrefs({ 'flowa.language': 'en', 'flowa.onboardingComplete': true }, 'win32')
+    expect(existing['flowa.shortcut']).toBe('Control+Shift+Space')
+    expect(coercePrefs(null, 'win32')['flowa.shortcut']).toBe('F8')
+    expect(coercePrefs({ 'flowa.shortcut': 'F9', 'flowa.language': 'da' }, 'linux')['flowa.shortcut']).toBe('F9')
+    expect(coercePrefs({ 'flowa.shortcut': 'fn', 'flowa.language': 'en' }, 'win32')['flowa.shortcut']).toBe('Control+Shift+Space')
   })
   it('rewrites ephemeral aggregates to default (setMicrophoneUID)', () => {
     expect(normalizedMicrophoneUID('CADefaultDeviceAggregate-852-0', isEphemeralAggregateUID)).toBe('default')

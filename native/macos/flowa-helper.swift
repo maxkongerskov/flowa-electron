@@ -3,6 +3,10 @@
 // Gives the Electron app the exact macOS primitives the Swift app used:
 //   watch-fn     CGEventTap (listen-only, flagsChanged) → prints fn-down / fn-up
 //                (GlobalHotkey.swift). Prints "ready" or "denied" first.
+//   watch-modifiers
+//                CGEventTap (listen-only) for a modifier tapped alone.
+//                Prints "ready"/"denied", then "mod-down RightAlt" / "mod-up RightAlt"
+//                and "key" when some other key goes down (the character is not printed).
 //   check-im     IOHIDCheckAccess(ListenEvent) → granted | denied   (PermissionChecker.swift)
 //   request-im   IOHIDRequestAccess(ListenEvent)
 //   frontmost    NSWorkspace.frontmostApplication → {"pid","bundleId","name"}
@@ -22,8 +26,31 @@ func emit(_ s: String) { print(s); fflush(stdout) }
 
 // Globals (not locals) so the C event-tap callback can use them without capturing.
 var fnDown = false
+var modifierDown: [String: Bool] = [:]
 final class TapBox { var tap: CFMachPort? }
 let tapBox = TapBox()
+
+func modifierName(_ code: CGKeyCode) -> String? {
+    switch code {
+    case 0x38: return "LeftShift"
+    case 0x3C: return "RightShift"
+    case 0x3B: return "LeftControl"
+    case 0x3E: return "RightControl"
+    case 0x3A: return "LeftAlt"
+    case 0x3D: return "RightAlt"
+    case 0x37: return "LeftMeta"
+    case 0x36: return "RightMeta"
+    case 0x3F: return "fn"
+    default: return nil
+    }
+}
+
+func emitModifier(_ name: String, down: Bool) {
+    let was = modifierDown[name] ?? false
+    if was == down { return }
+    modifierDown[name] = down
+    emit(down ? "mod-down \(name)" : "mod-up \(name)")
+}
 
 switch args.first ?? "" {
 case "watch-fn":
@@ -68,6 +95,62 @@ case "watch-fn":
     let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
     CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
     CGEvent.tapEnable(tap: tap, enable: true)
+    emit("ready")
+    CFRunLoopRun()
+
+case "watch-modifiers":
+    Thread.detachNewThread {
+        while let _ = readLine(strippingNewline: true) {}
+        exit(0)
+    }
+    guard CGPreflightListenEventAccess(),
+          IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted else {
+        emit("denied")
+        exit(3)
+    }
+    let modMask = CGEventMask(
+        (1 << CGEventType.flagsChanged.rawValue) |
+        (1 << CGEventType.keyDown.rawValue) |
+        (1 << CGEventType.keyUp.rawValue)
+    )
+    let modCallback: CGEventTapCallBack = { _, type, event, _ in
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let tap = tapBox.tap { CGEvent.tapEnable(tap: tap, enable: true) }
+            return Unmanaged.passUnretained(event)
+        }
+        let code = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+        let name = modifierName(code)
+        let downNow = name == nil ? false : CGEventSource.keyState(.hidSystemState, key: code)
+        let fnNow = event.flags.contains(.maskSecondaryFn)
+        let isRepeat = type == .keyDown && event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+        DispatchQueue.main.async {
+            if type == .flagsChanged {
+                if let name { emitModifier(name, down: downNow) }
+                if fnNow != fnDown {
+                    fnDown = fnNow
+                    if name != "fn" { emitModifier("fn", down: fnNow) }
+                }
+            } else if type == .keyDown && name == nil && !isRepeat {
+                emit("key")
+            }
+        }
+        return Unmanaged.passUnretained(event)
+    }
+    guard let modTap = CGEvent.tapCreate(
+        tap: .cgSessionEventTap,
+        place: .headInsertEventTap,
+        options: .listenOnly,
+        eventsOfInterest: modMask,
+        callback: modCallback,
+        userInfo: nil
+    ) else {
+        emit("denied")
+        exit(3)
+    }
+    tapBox.tap = modTap
+    let modSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, modTap, 0)
+    CFRunLoopAddSource(CFRunLoopGetCurrent(), modSource, .commonModes)
+    CGEvent.tapEnable(tap: modTap, enable: true)
     emit("ready")
     CFRunLoopRun()
 
@@ -138,6 +221,6 @@ case "paste":
     emit("pasted front=\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?")")
 
 default:
-    FileHandle.standardError.write("usage: flowa-helper watch-fn|check-im|request-im|check-ax|frontmost|paste [pid]\n".data(using: .utf8)!)
+    FileHandle.standardError.write("usage: flowa-helper watch-fn|watch-modifiers|check-im|request-im|check-ax|frontmost|paste [pid]\n".data(using: .utf8)!)
     exit(64)
 }
