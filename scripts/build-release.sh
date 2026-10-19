@@ -36,6 +36,21 @@ if [ -f models/parakeet-tdt-0.6b-v3/encoder.int8.onnx ]; then
 else
   echo "Parakeet 0.6B weights not staged (optional). npm run setup:parakeet"
 fi
+# sherpa-onnx-offline loads libonnxruntime from its own directory
+# (@loader_path / $ORIGIN). sherpa/lib/ is not on that search path.
+for ARCH in arm64 x64; do
+  SHERPA_DIR="resources/bin/darwin-${ARCH}/sherpa"
+  if [ -e "$SHERPA_DIR/sherpa-onnx-offline" ]; then
+    for lib in libonnxruntime.dylib libsherpa-onnx-c-api.dylib libsherpa-onnx-cxx-api.dylib; do
+      [ -e "$SHERPA_DIR/$lib" ] || { echo "Missing $SHERPA_DIR/$lib — re-run npm run setup:sherpa so shared libraries sit beside sherpa-onnx-offline." >&2; exit 1; }
+    done
+  fi
+done
+LINUX_SHERPA="resources/bin/linux-x64/sherpa"
+if [ -e "$LINUX_SHERPA/sherpa-onnx-offline" ] && [ ! -e "$LINUX_SHERPA/libonnxruntime.so" ]; then
+  echo "Missing $LINUX_SHERPA/libonnxruntime.so — re-run npm run setup:sherpa." >&2
+  exit 1
+fi
 [ "$(shasum -a 1 "$MODEL" | cut -d' ' -f1)" = "$MODEL_SHA1" ] || { echo "$MODEL: SHA-1 mismatch" >&2; exit 1; }
 for d in darwin-arm64/whisper-server darwin-x64/whisper-server win32-x64/whisper-server.exe linux-x64/whisper-server; do
   [ -f "resources/bin/$d" ] || { echo "Missing engine resources/bin/$d" >&2; exit 1; }

@@ -48,7 +48,7 @@ npm run setup:mac-helper    # macOS only: builds resources/mac/flowa-helper (fn 
 npm run setup:whisper       # builds whisper.cpp v1.9.5 → resources/bin/<platform>-<arch>/
 npm run setup:model         # downloads ggml-large-v3-turbo.bin (1.6 GB, sha1-verified) → models/
 npm run setup:parakeet      # optional: Parakeet TDT 0.6B v3 int8 ONNX → models/parakeet-tdt-0.6b-v3/
-npm run setup:sherpa        # optional: sherpa-onnx CLI for Parakeet → resources/bin/<platform>-<arch>/sherpa/
+npm run setup:sherpa        # optional: sherpa-onnx CLI + libonnxruntime beside it → resources/bin/<platform>-<arch>/sherpa/
 # npm run setup:sherpa -- --cuda    # Linux/Windows x64 CUDA build of sherpa-onnx
 # FLOWA_WHISPER_VARIANT=cuda npm run setup:whisper     # whisper-server-cuda
 # FLOWA_WHISPER_VARIANT=vulkan npm run setup:whisper   # whisper-server-vulkan
@@ -247,6 +247,15 @@ Parakeet GPU backends:
 | CPU | `--provider=cpu` |
 
 A release build bundles Parakeet the same way it bundles Whisper: stage the files, then `scripts/build-release.sh` / `electron-builder.release.cjs` copies `models/parakeet-tdt-0.6b-v3/` when `encoder.int8.onnx` is present. The ggml file is still required. The multi-GB weights stay gitignored.
+
+`npm run setup:sherpa` copies the offline CLI and its shared libraries into the same directory. On macOS that is `libonnxruntime.dylib`, `libsherpa-onnx-c-api.dylib`, and `libsherpa-onnx-cxx-api.dylib` next to `sherpa-onnx-offline` (not under `sherpa/lib/`). The signed app resolves `@rpath/libonnxruntime.dylib` from `@loader_path`; `DYLD_LIBRARY_PATH` is ignored. `electron-builder` copies the whole `resources/bin/<platform>-<arch>` folder to `Contents/Resources/bin/` with no filter, so those siblings land at:
+
+- `Contents/Resources/bin/sherpa/sherpa-onnx-offline`
+- `Contents/Resources/bin/sherpa/libonnxruntime.dylib`
+- `Contents/Resources/bin/sherpa/libsherpa-onnx-c-api.dylib`
+- `Contents/Resources/bin/sherpa/libsherpa-onnx-cxx-api.dylib`
+
+On a Mac, setup rewrites install names to `@rpath/<basename>`, adds `@loader_path` when it is missing, and ad-hoc signs the rewritten files. `scripts/sign-mac.sh` signs them again with the Developer ID. Linux uses the same flat layout (`libonnxruntime.so` beside the binary, `$ORIGIN`).
 
 ---
 

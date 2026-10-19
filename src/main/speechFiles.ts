@@ -119,6 +119,9 @@ export function sherpaSearchDirs(binDir: string, provider: ParakeetProvider): st
 }
 
 export function sherpaProcessEnv(bin: string): NodeJS.ProcessEnv {
+  // Signed macOS builds ignore DYLD_LIBRARY_PATH. setup:sherpa puts
+  // libonnxruntime beside the binary so @loader_path resolves it. lib/ is only
+  // a fallback for an unpacked sherpa tree.
   const dir = path.dirname(bin)
   const lib = path.join(dir, 'lib')
   const extra = [dir, fs.existsSync(lib) ? lib : ''].filter(Boolean)

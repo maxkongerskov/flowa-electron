@@ -4,11 +4,37 @@
 // (src/main/transcriber.ts → modelCandidates), so no first-run download is needed.
 // Stage the model first: models/ggml-large-v3-turbo.bin (gitignored).
 // Parakeet is optional and bundled the same way when models/parakeet-tdt-0.6b-v3/
-// is staged (`npm run setup:parakeet`). sherpa-onnx binaries live under
-// resources/bin/<platform>-<arch>/sherpa/ and are copied with the rest of bin/.
+// is staged (`npm run setup:parakeet`). sherpa-onnx is copied with the rest of
+// resources/bin/<platform>-<arch>/, with no filter that would drop dylibs.
+// setup:sherpa must place libonnxruntime next to sherpa-onnx-offline. dyld in a
+// signed app resolves @rpath/libonnxruntime.dylib from @loader_path (the sherpa
+// directory). Contents/Resources/bin/lib/ and sherpa/lib/ are both misses.
 const fs = require('node:fs')
 const path = require('node:path')
 const yaml = require('js-yaml')
+
+// Fail the release config when a staged sherpa tree still has the nested layout
+// (or is missing the runtime the offline CLI is linked against).
+function assertSherpaSibling(platformKey, folder, binaryName, runtimeName) {
+  const dir = path.join(__dirname, 'resources', 'bin', platformKey, folder)
+  const bin = path.join(dir, binaryName)
+  if (!fs.existsSync(bin)) return
+  const runtime = path.join(dir, runtimeName)
+  if (!fs.existsSync(runtime)) {
+    throw new Error(
+      `${runtimeName} must sit beside ${binaryName} in ${dir}. ` +
+      `The signed app loads it from @loader_path / $ORIGIN, not from ${folder}/lib/. ` +
+      'Re-run npm run setup:sherpa.'
+    )
+  }
+}
+for (const [key, binary, runtime] of [
+  ['darwin-arm64', 'sherpa-onnx-offline', 'libonnxruntime.dylib'],
+  ['darwin-x64', 'sherpa-onnx-offline', 'libonnxruntime.dylib'],
+  ['linux-x64', 'sherpa-onnx-offline', 'libonnxruntime.so']
+]) {
+  for (const folder of ['sherpa', 'sherpa-cuda']) assertSherpaSibling(key, folder, binary, runtime)
+}
 
 const base = yaml.load(fs.readFileSync(path.join(__dirname, 'electron-builder.yml'), 'utf8'))
 
