@@ -81,32 +81,69 @@ on a Mac (`npm run dist:win` / `npm run dist:linux` from macOS); you do not need
 Linux machine for the installer itself. The whisper engine inside it must already be the
 target OS's binary (see the release script below).
 
-### Release installers (what to run after this merges)
+### Releasing an update
 
-The signed, model-bundled release is **`bash scripts/build-release.sh`**, run **on a Mac**.
-It reads the version from `package.json` (1.2.0 → `Flowa-1.2.0-arm64.dmg`,
-`Flowa-Setup-1.2.0-x64.exe`, …) and calls `electron-builder` with
-`electron-builder.release.cjs`, which wraps `electron-builder.yml`, bundles
-`models/ggml-large-v3-turbo.bin`, and picks `resources/bin/<os>-<arch>/` per target so a
-Mac build does not ship the macOS engine inside the Windows installer.
-
-The script itself cross-builds the other platforms. After the two macOS dmgs it runs:
+On a Mac, one command bumps the version (unless you pass the version already in
+`package.json`), commits, tags, pushes, builds, and publishes the GitHub Release.
+Notarization is required. If signing, notarization, stapling, or the feed check fails,
+the script exits before `gh release create`.
 
 ```bash
-npx electron-builder --config electron-builder.release.cjs --win nsis --x64
-npx electron-builder --config electron-builder.release.cjs --linux AppImage deb --x64
+npm run release -- patch          # 1.2.1 → 1.2.2, then build and publish v1.2.2
+npm run release -- minor
+npm run release -- 1.2.1          # package.json is already 1.2.1: tag and publish it
 ```
 
-So **yes: the Windows installer is cross-built on macOS.** No Windows host, no Wine step in
-this repo — electron-builder's NSIS target produces `Flowa-Setup-<version>-x64.exe` from the
-Mac. Linux AppImage and `.deb` are cross-built the same way. The script only builds Windows
-and Linux **x64** (the yml also lists Windows arm64, but the release script does not pass it).
+Before that command will succeed:
 
-Before it will succeed, the Mac needs a Developer ID (`security find-identity`), the staged
-engines `resources/bin/{darwin-arm64,darwin-x64,win32-x64,linux-x64}/`, and
-`models/ggml-large-v3-turbo.bin` with sha1 `4af2b29d7ec73d781377bfd1758ca957a807e941`.
-Override the signing identity or notary profile with `FLOWA_SIGN_ID` / `FLOWA_NOTARY_PROFILE`.
-Output lands in `release/`. Code signing of the Windows exe is not configured.
+- a clean git tree, on a branch
+- Developer ID `0EF5E5C4F619F8322BB10EE8255603A26AB18553` in the keychain (`security find-identity`), or set `FLOWA_SIGN_ID`
+- notarytool keychain profile `AC_PASSWORD` (`xcrun notarytool history --keychain-profile AC_PASSWORD`), or set `FLOWA_NOTARY_PROFILE`
+- `gh auth status` for `maxkongerskov/flowa-electron`
+- staged engines `resources/bin/{darwin-arm64,darwin-x64,win32-x64,linux-x64}/`
+- `models/ggml-large-v3-turbo.bin` with sha1 `4af2b29d7ec73d781377bfd1758ca957a807e941`
+
+`electron-builder.release.cjs` bundles that model and picks `resources/bin/<os>-<arch>/` per
+target, so the Mac build does not ship the macOS engine inside the Windows installer.
+Windows and Linux are cross-built on the Mac (NSIS x64, AppImage, and deb). No Windows host
+and no Wine step. Windows arm64 is not built. The Windows exe is unsigned; electron-updater
+still installs it. A `.deb` install updates itself when `dpkg` or `apt` is available; anything
+else on Linux opens the release page.
+
+What lands in `release/` and on the GitHub Release (published, not a draft, marked Latest):
+
+| File | Who uses it |
+|---|---|
+| `Flowa-<version>-arm64.dmg`, `Flowa-<version>-x64.dmg` | People downloading Flowa. Signed, notarized, stapled. |
+| `Flowa-<version>-arm64-mac.zip`, `Flowa-<version>-x64-mac.zip` | electron-updater only. The app never shows these. |
+| `Flowa-Setup-<version>-x64.exe` | Windows NSIS |
+| `Flowa-<version>.AppImage`, `flowa_<version>_amd64.deb` | Linux |
+| `latest-mac.yml`, `latest.yml`, `latest-linux.yml` | Written **after** stapling, with sha512 and size of the final files |
+| `*.blockmap` | Differential download for the zip, exe, and AppImage |
+
+`latest-mac.yml` lists both zips and both dmgs. The installed 1.2.0 app updates to this release
+from Home → **Check for updates**, then **Download**. Progress stays in the banner. When the
+download finishes, Flowa quits and restarts into the new version. An unsigned Mac build keeps
+the dmg link instead of swapping itself.
+
+To rebuild the current version without publishing (still on a Mac):
+
+```bash
+FLOWA_SIGN_ID=0EF5E5C4F619F8322BB10EE8255603A26AB18553 \
+FLOWA_NOTARY_PROFILE=AC_PASSWORD \
+bash scripts/build-release.sh
+```
+
+If `npm run release` pushed the tag and then notarization failed, the GitHub Release was not
+created. Fix the problem and publish that same version without bumping again:
+
+```bash
+FLOWA_SIGN_ID=0EF5E5C4F619F8322BB10EE8255603A26AB18553 \
+FLOWA_NOTARY_PROFILE=AC_PASSWORD \
+FLOWA_REQUIRE_NOTARY=1 \
+bash scripts/build-release.sh
+bash scripts/publish-release.sh
+```
 
 ### Dictation shortcut
 
@@ -271,7 +308,7 @@ A release build still requires Turbo. `electron-builder.release.cjs` also copies
 | Language catalog (99 + auto) | `languages.ts` | ✅ generated from `LanguageOption.swift` |
 | Unit tests (Swift `FlowaTests`) | `tests/*.test.ts` (99) | ✅ logic tests ported, including shortcut validation, migration, the recorder, and update checks. 🟡 the E2E fixtures run through the dev self-test, not under vitest |
 | Code signing / notarization | – | ⛔ not done yet (needs certificates) |
-| Update check | `electron-updater` → GitHub `latest*.yml`, Home banner | 🟡 launch + Check for Updates. Quiet banner with notes and a download / release link. No silent replace until the app is signed |
+| Update check | `electron-updater` → GitHub `latest*.yml`, Home banner | ✅ Check for updates, then Download with progress, then quit and restart. macOS uses the updater zip (Developer ID signed). Unsigned Mac builds and unsupported Linux packages open the release page. Windows NSIS and AppImage / deb install themselves |
 
 ## Platform-dependent parts and their equivalents
 
@@ -332,5 +369,6 @@ MIT (same as Swift-Flowa). whisper.cpp is MIT. The Whisper weights are MIT (Open
    download keeps installers around 100 MB.
 4. **GitHub target.** Should this replace `maxkongerskov/Flowa`, or go into `Flowa-Windows` or a new repo?
 5. **Signing.** Signing/notarization needs an Apple Developer ID (team 6LZ2DS9JPD) and a Windows code-signing certificate.
-6. **Version number.** App version is 1.2.0 (`package.json`). The download table above is the
-   last published release, v1.1.0. The next `scripts/build-release.sh` run tags artifacts as 1.2.0.
+6. **Version number.** App version is 1.2.1 (`package.json`). `npm run release -- 1.2.1` publishes
+   that version. `npm run release -- patch` publishes the next patch. The download table above
+   stays on the last installers that were actually published.

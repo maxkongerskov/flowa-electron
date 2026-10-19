@@ -8,12 +8,21 @@ import {
   assetDownloadUrl,
   buildUpdateOffer,
   compareSemver,
+  formatDownloadProgress,
   formatReleaseNotes,
+  installKindForRuntime,
   interpretUpdateCheck,
   isFlowaReleaseUrl,
   isNewerVersion,
+  macDeveloperIdSigned,
+  noteDownloadComplete,
+  noteDownloadFailed,
+  noteDownloadProgress,
+  noteInstall,
   pickInstallerName,
   releasePageUrl,
+  startDownload,
+  updaterAssetName,
   type UpdateState
 } from '@shared/updates'
 
@@ -145,7 +154,8 @@ describe('interpretUpdateCheck', () => {
       notes: 'Shorter startup.',
       releaseUrl: releasePageUrl('1.3.0'),
       downloadUrl: null,
-      downloadName: null
+      downloadName: null,
+      autoInstall: false
     }
     expect(interpretUpdateCheck({ ...base, previous, outcome: { ok: false } })).toEqual(previous)
   })
@@ -173,6 +183,144 @@ describe('interpretUpdateCheck', () => {
     })
     expect(offer).toMatchObject({ kind: 'available', downloadUrl: null, downloadName: null })
     expect(offer?.releaseUrl).toContain(`/${UPDATE_REPOSITORY.owner}/${UPDATE_REPOSITORY.repo}/`)
+  })
+})
+
+describe('in-app install', () => {
+  const macFiles = [
+    'Flowa-1.3.0-arm64-mac.zip',
+    'Flowa-1.3.0-x64-mac.zip',
+    'Flowa-1.3.0-arm64.dmg',
+    'Flowa-1.3.0-x64.dmg'
+  ]
+
+  it('recognises a Developer ID signature and refuses an ad-hoc one', () => {
+    expect(macDeveloperIdSigned('Authority=Developer ID Application: Max Køngerskov (TEAM)')).toBe(true)
+    expect(macDeveloperIdSigned('Signature=adhoc\nAuthority=Developer ID Application: Nobody')).toBe(false)
+    expect(macDeveloperIdSigned('Signature=adhoc')).toBe(false)
+    expect(installKindForRuntime({ platform: 'darwin', packaged: true, codesignInfo: 'Authority=Developer ID Application: Max (T)' })).toBe('mac-zip')
+    expect(installKindForRuntime({ platform: 'darwin', packaged: true, codesignInfo: 'Signature=adhoc' })).toBeNull()
+    expect(installKindForRuntime({ platform: 'darwin', packaged: false, codesignInfo: 'Authority=Developer ID Application: Max (T)' })).toBeNull()
+    expect(installKindForRuntime({ platform: 'win32', packaged: true })).toBe('nsis')
+    expect(installKindForRuntime({ platform: 'linux', packaged: true, appImagePath: '/tmp/Flowa.AppImage' })).toBe('appimage')
+    expect(installKindForRuntime({ platform: 'linux', packaged: true, linuxPackageType: 'deb\n' })).toBe('deb')
+    expect(installKindForRuntime({ platform: 'linux', packaged: true })).toBeNull()
+  })
+
+  it('downloads the zip in-app and links the dmg, never the zip', () => {
+    const offer = buildUpdateOffer({
+      currentVersion: '1.2.1',
+      latestVersion: '1.3.0',
+      notes: 'Shorter startup.',
+      files: macFiles,
+      platform: 'darwin',
+      arch: 'arm64',
+      installKind: 'mac-zip'
+    })
+    expect(offer).toMatchObject({
+      kind: 'available',
+      version: '1.3.0',
+      autoInstall: true,
+      downloadName: 'Flowa-1.3.0-arm64.dmg'
+    })
+    expect(offer?.downloadName?.endsWith('.zip')).toBe(false)
+    expect(updaterAssetName('mac-zip', macFiles, 'arm64')).toBe('Flowa-1.3.0-arm64-mac.zip')
+    expect(updaterAssetName('mac-zip', macFiles, 'x64')).toBe('Flowa-1.3.0-x64-mac.zip')
+    expect(updaterAssetName('mac-zip', macFiles, 'x64')?.includes('arm64')).toBe(false)
+  })
+
+  it('opens the dmg when the mac build is unsigned', () => {
+    const offer = buildUpdateOffer({
+      currentVersion: '1.2.1',
+      latestVersion: '1.3.0',
+      notes: '',
+      files: macFiles,
+      platform: 'darwin',
+      arch: 'x64',
+      installKind: null
+    })
+    expect(offer).toMatchObject({ autoInstall: false, downloadName: 'Flowa-1.3.0-x64.dmg' })
+    expect(startDownload(offer!)).toEqual(offer)
+  })
+
+  it('auto-installs Windows NSIS and Linux AppImage, and a deb package', () => {
+    expect(
+      buildUpdateOffer({
+        currentVersion: '1.2.1',
+        latestVersion: '1.3.0',
+        notes: '',
+        files: ['Flowa-Setup-1.3.0-x64.exe'],
+        platform: 'win32',
+        arch: 'x64',
+        installKind: 'nsis'
+      })
+    ).toMatchObject({ autoInstall: true, downloadName: 'Flowa-Setup-1.3.0-x64.exe' })
+    const linuxFiles = ['Flowa-1.3.0.AppImage', 'flowa_1.3.0_amd64.deb']
+    expect(
+      buildUpdateOffer({
+        currentVersion: '1.2.1',
+        latestVersion: '1.3.0',
+        notes: '',
+        files: linuxFiles,
+        platform: 'linux',
+        arch: 'x64',
+        installKind: 'appimage'
+      })
+    ).toMatchObject({ autoInstall: true, downloadName: 'Flowa-1.3.0.AppImage' })
+    expect(
+      buildUpdateOffer({
+        currentVersion: '1.2.1',
+        latestVersion: '1.3.0',
+        notes: '',
+        files: linuxFiles,
+        platform: 'linux',
+        arch: 'x64',
+        installKind: 'deb'
+      })
+    ).toMatchObject({ autoInstall: true, downloadName: 'flowa_1.3.0_amd64.deb' })
+    expect(
+      buildUpdateOffer({
+        currentVersion: '1.2.1',
+        latestVersion: '1.3.0',
+        notes: '',
+        files: linuxFiles,
+        platform: 'linux',
+        arch: 'x64',
+        installKind: null
+      })
+    ).toMatchObject({ autoInstall: false, downloadName: 'Flowa-1.3.0.AppImage' })
+  })
+
+  it('walks check → download progress → downloaded → install, and a failed download keeps the public link', () => {
+    const offer = buildUpdateOffer({
+      currentVersion: '1.2.1',
+      latestVersion: '1.3.0',
+      notes: 'Shorter startup.',
+      files: macFiles,
+      platform: 'darwin',
+      arch: 'arm64',
+      installKind: 'mac-zip'
+    })!
+    let state: UpdateState = startDownload(offer)
+    expect(state.kind).toBe('downloading')
+    state = noteDownloadProgress(state, { percent: 41.2, transferred: 12 * 1024 * 1024, total: 20 * 1024 * 1024 })
+    expect(state).toMatchObject({ kind: 'downloading', percent: 41.2, total: 20 * 1024 * 1024 })
+    expect(formatDownloadProgress({ percent: 41.2, transferred: 12 * 1024 * 1024, total: 20 * 1024 * 1024 })).toBe('41% · 12 MB of 20 MB')
+    state = noteDownloadComplete(state)
+    expect(state.kind).toBe('downloaded')
+    state = noteInstall(state)
+    expect(state).toMatchObject({ kind: 'installing', version: '1.3.0', autoInstall: true })
+    expect(interpretUpdateCheck({ ...base, currentVersion: '1.2.1', previous: state, outcome: { ok: false } })).toEqual(state)
+    const failed = noteDownloadFailed(
+      noteDownloadProgress(offer, { percent: 10, transferred: 1, total: 10 }),
+      'Could not download.'
+    )
+    expect(failed).toMatchObject({
+      kind: 'available',
+      autoInstall: false,
+      notes: 'Could not download.',
+      downloadName: 'Flowa-1.3.0-arm64.dmg'
+    })
   })
 })
 

@@ -1,7 +1,7 @@
 {
   "name": "flowa",
   "productName": "Flowa",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Local voice dictation for macOS, Windows and Linux. Press a key, speak, press it again. Your words appear wherever your cursor is.",
   "main": "out/main/index.js",
   "author": "Max Køngerskov",
@@ -21,6 +21,7 @@
     "dist:mac": "bash scripts/build-mac-icons.sh && electron-vite build && electron-builder --mac",
     "dist:win": "electron-vite build && electron-builder --win",
     "dist:linux": "electron-vite build && electron-builder --linux",
+    "release": "bash scripts/release.sh",
     "postinstall": "node node_modules/electron/install.js",
     "setup:mac-icons": "bash scripts/build-mac-icons.sh"
   },

@@ -1,7 +1,8 @@
-// Pure update-check policy. electron-updater fetches the GitHub channel file
-// (latest.yml / latest-mac.yml / latest-linux.yml); this module decides whether
-// that result is worth showing and which installer link to offer.
-// Unsigned builds never auto-replace themselves — the banner only opens a URL.
+// Pure update policy. electron-updater fetches the GitHub channel file
+// (latest.yml / latest-mac.yml / latest-linux.yml). This module decides what
+// the banner shows and whether Download may quitAndInstall.
+// The updater zip is never offered as a link. Unsigned macOS builds, and Linux
+// packages electron-updater cannot apply, open the public installer instead.
 
 export const UPDATE_REPOSITORY = {
   owner: 'maxkongerskov',
@@ -11,20 +12,36 @@ export const UPDATE_REPOSITORY = {
 export const UPDATE_CHECK_UNPACKAGED = 'Update checks run in the installed app.'
 export const UPDATE_CHECK_FAILED = "Couldn't check for updates. Check your connection and try again."
 
+/** How this running install can apply an update, when the feed has the right file. */
+export type UpdateInstallKind = 'mac-zip' | 'nsis' | 'appimage' | 'deb'
+
+export interface UpdateOffer {
+  version: string
+  notes: string
+  releaseUrl: string
+  /** Public installer (dmg, exe, AppImage, or deb). Never the updater zip. */
+  downloadUrl: string | null
+  downloadName: string | null
+  /** True when Download should quitAndInstall instead of opening downloadUrl. */
+  autoInstall: boolean
+}
+
+export interface DownloadProgress {
+  percent: number
+  transferred: number
+  total: number
+}
+
 export type UpdateState =
   | { kind: 'idle' }
   | { kind: 'checking' }
   | { kind: 'current' }
   | { kind: 'skipped'; message: string }
   | { kind: 'error'; message: string }
-  | {
-      kind: 'available'
-      version: string
-      notes: string
-      releaseUrl: string
-      downloadUrl: string | null
-      downloadName: string | null
-    }
+  | ({ kind: 'available' } & UpdateOffer)
+  | ({ kind: 'downloading' } & UpdateOffer & DownloadProgress)
+  | ({ kind: 'downloaded' } & UpdateOffer)
+  | ({ kind: 'installing' } & UpdateOffer)
 
 export interface UpdateFeedInfo {
   version: string
@@ -243,6 +260,60 @@ function codePoint(value: number): string {
   return String.fromCodePoint(value)
 }
 
+/** Developer ID signed apps can be swapped by Squirrel. Ad-hoc and unsigned builds cannot. */
+export function macDeveloperIdSigned(codesignInfo: string): boolean {
+  if (/Signature=adhoc/i.test(codesignInfo)) return false
+  return /Authority=Developer ID Application:/.test(codesignInfo)
+}
+
+export function installKindForRuntime(args: {
+  platform: string
+  packaged: boolean
+  codesignInfo?: string
+  appImagePath?: string | null
+  linuxPackageType?: string | null
+}): UpdateInstallKind | null {
+  if (!args.packaged) return null
+  if (args.platform === 'darwin') return macDeveloperIdSigned(args.codesignInfo ?? '') ? 'mac-zip' : null
+  if (args.platform === 'win32') return 'nsis'
+  if (args.platform === 'linux') {
+    if (args.appImagePath) return 'appimage'
+    if ((args.linuxPackageType ?? '').trim() === 'deb') return 'deb'
+    return null
+  }
+  return null
+}
+
+function filesForArch(names: readonly string[], arch: string): string[] {
+  const isArm = (name: string): boolean => name.toLowerCase().includes('arm64')
+  if (arch === 'arm64' && names.some(isArm)) return names.filter(isArm)
+  if (arch !== 'arm64') return names.filter((name) => !isArm(name))
+  return [...names]
+}
+
+/** Same choice electron-updater's findFile makes after the per-arch filter. */
+export function updaterAssetName(kind: UpdateInstallKind, files: readonly string[], arch: string): string | null {
+  const ext = kind === 'mac-zip' ? '.zip' : kind === 'nsis' ? '.exe' : kind === 'appimage' ? '.appimage' : '.deb'
+  const pool = filesForArch(files.map(fileBaseName), arch).filter((name) => name.toLowerCase().endsWith(ext))
+  if (pool.length === 0) return null
+  return pool.find((name) => name.toLowerCase().includes(arch.toLowerCase())) ?? pool[0] ?? null
+}
+
+export function feedSupportsInstall(kind: UpdateInstallKind | null, files: readonly string[], arch: string): boolean {
+  if (!kind) return false
+  return updaterAssetName(kind, files, arch) != null
+}
+
+function publicInstallerName(platform: string, arch: string, version: string, files: readonly string[], installKind: UpdateInstallKind | null): string | null {
+  if (installKind === 'deb') {
+    const deb = updaterAssetName('deb', files, arch)
+    if (deb) return deb
+  }
+  const name = pickInstallerName(platform, arch, version, files)
+  if (name && name.toLowerCase().endsWith('.zip')) return null
+  return name
+}
+
 export function buildUpdateOffer(args: {
   currentVersion: string
   latestVersion: string
@@ -250,11 +321,13 @@ export function buildUpdateOffer(args: {
   files: readonly string[]
   platform: string
   arch: string
+  installKind?: UpdateInstallKind | null
 }): Extract<UpdateState, { kind: 'available' }> | null {
   if (!isNewerVersion(args.latestVersion, args.currentVersion)) return null
   const version = stripVersion(args.latestVersion)
   if (!version) return null
-  const downloadName = pickInstallerName(args.platform, args.arch, version, args.files)
+  const installKind = args.installKind ?? null
+  const downloadName = publicInstallerName(args.platform, args.arch, version, args.files, installKind)
   const downloadUrl = downloadName ? assetDownloadUrl(version, downloadName) : null
   return {
     kind: 'available',
@@ -262,8 +335,72 @@ export function buildUpdateOffer(args: {
     notes: formatReleaseNotes(args.notes),
     releaseUrl: releasePageUrl(version),
     downloadUrl: downloadUrl && isFlowaReleaseUrl(downloadUrl) ? downloadUrl : null,
-    downloadName
+    downloadName,
+    autoInstall: feedSupportsInstall(installKind, args.files, args.arch)
   }
+}
+
+function offerOf(state: UpdateState): UpdateOffer | null {
+  if (state.kind !== 'available' && state.kind !== 'downloading' && state.kind !== 'downloaded' && state.kind !== 'installing') return null
+  return {
+    version: state.version,
+    notes: state.notes,
+    releaseUrl: state.releaseUrl,
+    downloadUrl: state.downloadUrl,
+    downloadName: state.downloadName,
+    autoInstall: state.autoInstall
+  }
+}
+
+/** User chose Download on a build that can quitAndInstall. */
+export function startDownload(state: UpdateState): UpdateState {
+  if (state.kind !== 'available' || !state.autoInstall) return state
+  return { ...state, kind: 'downloading', percent: 0, transferred: 0, total: 0 }
+}
+
+export function noteDownloadProgress(state: UpdateState, progress: DownloadProgress): UpdateState {
+  const offer = offerOf(state)
+  if (!offer?.autoInstall) return state
+  if (state.kind !== 'downloading' && state.kind !== 'available') return state
+  const percent = Number.isFinite(progress.percent) ? Math.max(0, Math.min(100, progress.percent)) : 0
+  const transferred = Number.isFinite(progress.transferred) && progress.transferred > 0 ? progress.transferred : 0
+  const total = Number.isFinite(progress.total) && progress.total > 0 ? progress.total : 0
+  return { ...offer, kind: 'downloading', percent, transferred, total }
+}
+
+export function noteDownloadComplete(state: UpdateState): UpdateState {
+  const offer = offerOf(state)
+  if (!offer?.autoInstall) return state
+  if (state.kind !== 'downloading' && state.kind !== 'available') return state
+  return { ...offer, kind: 'downloaded' }
+}
+
+export function noteInstall(state: UpdateState): UpdateState {
+  const offer = offerOf(state)
+  if (!offer?.autoInstall) return state
+  if (state.kind !== 'downloaded' && state.kind !== 'downloading') return state
+  return { ...offer, kind: 'installing' }
+}
+
+/** Download or install failed. The public installer link stays; auto-install does not retry itself. */
+export function noteDownloadFailed(state: UpdateState, message: string): UpdateState {
+  const offer = offerOf(state)
+  if (!offer) return { kind: 'error', message }
+  return { ...offer, kind: 'available', autoInstall: false, notes: message }
+}
+
+export function formatByteCount(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 MB'
+  const mb = bytes / (1024 * 1024)
+  if (mb >= 1024) return `${(mb / 1024).toFixed(mb >= 10240 ? 0 : 1)} GB`
+  if (mb >= 10) return `${Math.round(mb)} MB`
+  return `${mb.toFixed(1)} MB`
+}
+
+export function formatDownloadProgress(progress: DownloadProgress): string {
+  const percent = Math.max(0, Math.min(100, Math.round(progress.percent)))
+  if (progress.total > 0) return `${percent}% · ${formatByteCount(progress.transferred)} of ${formatByteCount(progress.total)}`
+  return `${percent}%`
 }
 
 /**
@@ -280,7 +417,11 @@ export function interpretUpdateCheck(args: {
   arch: string
   previous: UpdateState
   outcome: UpdateCheckOutcome
+  installKind?: UpdateInstallKind | null
 }): UpdateState {
+  if (args.previous.kind === 'downloading' || args.previous.kind === 'downloaded' || args.previous.kind === 'installing') {
+    return args.previous
+  }
   if (!args.packaged) {
     if (!args.manual) return args.previous.kind === 'checking' ? { kind: 'idle' } : args.previous
     return { kind: 'skipped', message: UPDATE_CHECK_UNPACKAGED }
@@ -298,7 +439,8 @@ export function interpretUpdateCheck(args: {
         notes: args.outcome.info.notes,
         files: args.outcome.info.files ?? [],
         platform: args.platform,
-        arch: args.arch
+        arch: args.arch,
+        installKind: args.installKind ?? null
       })
     : null
   if (offer) return offer

@@ -1,6 +1,6 @@
 // Port of Flowa/Sections/Banners.swift.
 import { OctagonAlert, TriangleAlert, X } from 'lucide-react'
-import type { UpdateState } from '@shared/types'
+import { formatDownloadProgress, type UpdateState } from '@shared/updates'
 
 export type BannerSeverity = 'warning' | 'danger'
 
@@ -51,16 +51,34 @@ export function PermissionBanner(p: { title: string; detail: string; actionTitle
   return <StatusBanner severity="warning" {...p} />
 }
 
-/** Quiet yellow note when a newer GitHub release exists, plus manual-check results. */
+/** Quiet note for a newer release: version, then Download with progress, then install. */
 export function UpdateBanner(props: { state: UpdateState; onOpen: () => void; onDismiss: () => void }) {
   const state = props.state
+  if (state.kind === 'downloading') {
+    return (
+      <StatusBanner
+        severity="warning"
+        title={`Downloading Flowa ${state.version}`}
+        detail={formatDownloadProgress(state)}
+      />
+    )
+  }
+  if (state.kind === 'downloaded' || state.kind === 'installing') {
+    return (
+      <StatusBanner
+        severity="warning"
+        title={`Installing Flowa ${state.version}`}
+        detail="Flowa will restart."
+      />
+    )
+  }
   if (state.kind === 'available') {
     return (
       <StatusBanner
         severity="warning"
         title={`Flowa ${state.version} is available`}
         detail={state.notes || 'A newer release is ready to download.'}
-        actionTitle={state.downloadUrl ? 'Download' : 'View'}
+        actionTitle={state.autoInstall || state.downloadUrl ? 'Download' : 'View'}
         action={props.onOpen}
       />
     )

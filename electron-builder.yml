@@ -36,6 +36,9 @@ mac:
   extraResources:
     - from: build/mac/Assets.car
       to: Assets.car
+  # Public installer only. scripts/build-release.sh zips the stapled .app
+  # afterwards and rewrites latest-mac.yml. A zip target here would be hashed
+  # before notarization, which breaks electron-updater.
   target:
     - target: dmg
       arch: [arm64, x64]

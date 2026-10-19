@@ -245,11 +245,17 @@ export function HomeView({ state: s }: { state: AppState }) {
                 <span className="tabular" style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{s.version}</span>
                 <button
                   className="btn-bordered"
-                  disabled={s.update.kind === 'checking'}
-                  style={s.update.kind === 'checking' ? { opacity: 0.6 } : undefined}
+                  disabled={s.update.kind === 'checking' || s.update.kind === 'downloading' || s.update.kind === 'downloaded' || s.update.kind === 'installing'}
+                  style={s.update.kind === 'checking' || s.update.kind === 'downloading' || s.update.kind === 'installing' ? { opacity: 0.6 } : undefined}
                   onClick={() => void f.action('checkForUpdates')}
                 >
-                  {s.update.kind === 'checking' ? 'Checking…' : 'Check'}
+                  {s.update.kind === 'checking'
+                    ? 'Checking…'
+                    : s.update.kind === 'downloading'
+                      ? 'Downloading…'
+                      : s.update.kind === 'downloaded' || s.update.kind === 'installing'
+                        ? 'Installing…'
+                        : 'Check for updates'}
                 </button>
               </div>
             </Row>

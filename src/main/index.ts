@@ -419,7 +419,7 @@ async function main(): Promise<void> {
     suspendShortcut: () => hotkey.suspend(),
     resumeShortcut: () => hotkey.resume(),
     checkForUpdates: () => checkForUpdates(),
-    openUpdate: () => updates.open(),
+    openUpdate: () => updates.accept(),
     dismissUpdateNote: () => updates.dismissNote()
   }
 
