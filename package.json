@@ -4,7 +4,7 @@
   "version": "1.2.0",
   "description": "Local voice dictation for macOS, Windows and Linux. Press a key, speak, press it again. Your words appear wherever your cursor is.",
   "main": "out/main/index.js",
-  "author": "Max K\u00f8ngerskov",
+  "author": "Max Køngerskov",
   "license": "MIT",
   "private": true,
   "homepage": "https://github.com/maxkongerskov/Flowa",
@@ -23,7 +23,9 @@
     "postinstall": "node node_modules/electron/install.js",
     "setup:mac-icons": "bash scripts/build-mac-icons.sh"
   },
-  "dependencies": {},
+  "dependencies": {
+    "electron-updater": "6.8.9"
+  },
   "devDependencies": {
     "@types/node": "22.20.5",
     "@types/react": "19.3.0",

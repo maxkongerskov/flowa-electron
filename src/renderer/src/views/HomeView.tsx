@@ -1,6 +1,6 @@
 // Port of Flowa/Sections/HomeView.swift — settings + recent dictations.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AudioWaveform, ChevronDown, ChevronRight, CircleX, Command, Globe, Info, Mic, Power, Search, Timer } from 'lucide-react'
+import { AudioWaveform, ChevronDown, ChevronRight, CircleX, Command, Globe, Info, Mic, Power, RefreshCw, Search, Timer } from 'lucide-react'
 import type { AppState } from '@shared/types'
 import { languageDisplayName } from '@shared/languages'
 import { inputsForPicker, type AudioInputDevice } from '@shared/micDeviceKind'
@@ -8,7 +8,7 @@ import { filterRecent } from '@shared/recent'
 import { recentMeta } from '@shared/status'
 import { maxDurationMinutesFromField, recommendedMaxDurationMinutes } from '@shared/prefs'
 import { shortcutLimitNote } from '@shared/shortcut'
-import { ConflictBanner, ErrorBanner, PermissionBanner, StatusBanner } from '../components/Banners'
+import { ConflictBanner, ErrorBanner, PermissionBanner, StatusBanner, UpdateBanner } from '../components/Banners'
 import { DarkModeToggle, LanguagePicker, RecentRow, StatusPill } from '../components/HomeChrome'
 import { ShortcutField } from '../components/ShortcutField'
 import { AcknowledgementsView } from './AcknowledgementsView'
@@ -141,6 +141,8 @@ export function HomeView({ state: s }: { state: AppState }) {
             />
           )}
 
+          <UpdateBanner state={s.update} onOpen={() => void f.action('openUpdate')} onDismiss={() => void f.action('dismissUpdateNote')} />
+
           {/* Settings card */}
           <div className="card" style={{ padding: '0 16px', position: 'relative' }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '8px 0' }}>
@@ -207,6 +209,20 @@ export function HomeView({ state: s }: { state: AppState }) {
               <button className="icon-btn" onClick={() => setAckOpen(true)} style={{ color: 'var(--text-tertiary)' }}>
                 <ChevronRight size={12} strokeWidth={3} />
               </button>
+            </Row>
+            <div className="hairline" />
+            <Row icon={RefreshCw} label="Version">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span className="tabular" style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{s.version}</span>
+                <button
+                  className="btn-bordered"
+                  disabled={s.update.kind === 'checking'}
+                  style={s.update.kind === 'checking' ? { opacity: 0.6 } : undefined}
+                  onClick={() => void f.action('checkForUpdates')}
+                >
+                  {s.update.kind === 'checking' ? 'Checking…' : 'Check'}
+                </button>
+              </div>
             </Row>
           </div>
 

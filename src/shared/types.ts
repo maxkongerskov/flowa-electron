@@ -4,6 +4,9 @@
 
 import type { Dictation } from './recent'
 import type { Prefs } from './prefs'
+import type { UpdateState } from './updates'
+
+export type { UpdateState }
 
 export type TranscriberStatus =
   | { kind: 'idle' }
@@ -55,6 +58,8 @@ export interface EngineInfo {
 }
 
 export interface AppState {
+  /** Bumped on every snapshot so a late `getState` cannot overwrite a newer push. */
+  stateRevision: number
   platform: NodeJS.Platform | string
   /** "Mac" / "PC" / "computer" — used where the Swift copy says "this Mac". */
   machineNoun: string
@@ -73,6 +78,8 @@ export interface AppState {
   launchAtLogin: boolean
   shortcut: ShortcutState
   engine: EngineInfo
+  /** GitHub release check. Idle unless a newer version, or a manual check, has something to say. */
+  update: UpdateState
 }
 
 /** Flow Bar window: what main tells the bar renderer. */

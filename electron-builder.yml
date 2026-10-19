@@ -1,6 +1,13 @@
 appId: com.maxkongerskov.FlowaElectron
 productName: Flowa
 copyright: Copyright © 2026 Max Køngerskov
+# Writes app-update.yml into the package so electron-updater can read
+# latest.yml / latest-mac.yml / latest-linux.yml from GitHub Releases.
+# A normal dist does not upload; pass --publish explicitly to publish.
+publish:
+  provider: github
+  owner: maxkongerskov
+  repo: flowa-electron
 directories:
   output: release
   buildResources: build

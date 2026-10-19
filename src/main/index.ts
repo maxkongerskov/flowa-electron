@@ -22,6 +22,7 @@ import { isLoginItemEnabled, setLoginItemEnabled } from './loginItem'
 import { runRepair } from './repair'
 import { openKeyboardSettings } from './permissions'
 import { runSelfTest } from './selftest'
+import { UpdateChecker } from './updates'
 
 configureUserDataPath()
 app.setName('Flowa')
@@ -53,6 +54,7 @@ async function main(): Promise<void> {
   let launchAtLogin = isLoginItemEnabled()
   let recordNonce = 0
   let menuKey = ''
+  let stateRevision = 0
 
   const showMain = (): void => {
     if (!mainWindow || mainWindow.isDestroyed()) {
@@ -74,6 +76,14 @@ async function main(): Promise<void> {
     }
     mainWindow.focus()
     if (process.platform === 'darwin') app.focus({ steal: true })
+  }
+
+  // Assigned once `broadcast` exists. Update checks must not run before that.
+  let publishState = (): void => {}
+  const updates = new UpdateChecker(() => publishState())
+  const checkForUpdates = (): void => {
+    showMain()
+    void updates.check(true)
   }
 
   const conflictStatus = (): AppState['conflict'] => {
@@ -117,7 +127,9 @@ async function main(): Promise<void> {
     const t = pipeline.transcriber
     const perms = permissions.state
     const acc = hotkey.accelerator || prefs.get(PrefKey.shortcut)
+    stateRevision += 1
     return {
+      stateRevision,
       platform: process.platform,
       machineNoun: machineNoun(process.platform),
       version: app.getVersion(),
@@ -141,7 +153,8 @@ async function main(): Promise<void> {
         active: hotkey.isAuthorized,
         recordNonce
       },
-      engine: { modelName: swiftModelVariant, ...t.engineInfo }
+      engine: { modelName: swiftModelVariant, ...t.engineInfo },
+      update: updates.state
     }
   }
 
@@ -195,6 +208,7 @@ async function main(): Promise<void> {
     onReinstall: confirmReinstall,
     onRepair: confirmRepair,
     onQuit: quit,
+    onCheckForUpdates: checkForUpdates,
     onShortcut: (shortcut) => void applyShortcut(shortcut),
     onRecordShortcut: recordShortcut,
     onResetShortcut: () => void applyShortcut(defaultShortcut(process.platform))
@@ -231,6 +245,7 @@ async function main(): Promise<void> {
         onReinstall: confirmReinstall,
         onRepair: confirmRepair,
         onQuit: quit,
+        onCheckForUpdates: checkForUpdates,
         onShortcut: (shortcut) => void applyShortcut(shortcut),
         onRecordShortcut: recordShortcut,
         onResetShortcut: () => void applyShortcut(defaultShortcut(process.platform))
@@ -242,6 +257,7 @@ async function main(): Promise<void> {
       }
     })
   }
+  publishState = broadcast
 
   const installAppMenu = (): void => {
     const dictation = dictationShortcutMenu(shortcutMenuArgs())
@@ -251,7 +267,7 @@ async function main(): Promise<void> {
           { role: 'appMenu' },
           dictation,
           { role: 'editMenu' },
-          { label: 'Window', submenu: [{ label: 'Show Flowa', accelerator: 'Command+0', click: showMain }, { role: 'minimize' }, { role: 'close' }] }
+          { label: 'Window', submenu: [{ label: 'Show Flowa', accelerator: 'Command+0', click: showMain }, { label: 'Check for Updates…', click: checkForUpdates }, { role: 'minimize' }, { role: 'close' }] }
         ])
       )
     } else {
@@ -262,6 +278,7 @@ async function main(): Promise<void> {
             label: 'Flowa',
             submenu: [
               { label: 'Show Flowa', accelerator: 'CommandOrControl+0', click: showMain },
+              { label: 'Check for Updates…', click: checkForUpdates },
               { type: 'separator' },
               { label: 'Quit Flowa', accelerator: 'CommandOrControl+Q', click: quit }
             ]
@@ -389,7 +406,10 @@ async function main(): Promise<void> {
       }),
     reloadShortcut: () => hotkey.restart(),
     suspendShortcut: () => hotkey.suspend(),
-    resumeShortcut: () => hotkey.resume()
+    resumeShortcut: () => hotkey.resume(),
+    checkForUpdates: () => checkForUpdates(),
+    openUpdate: () => updates.open(),
+    dismissUpdateNote: () => updates.dismissNote()
   }
 
   ipcMain.handle('action', async (e, name: unknown, ...args: unknown[]) => {
@@ -442,5 +462,6 @@ async function main(): Promise<void> {
   }
   pipeline.prewarm()
   broadcast()
+  void updates.check(false)
   void runSelfTest(pipeline, bar)
 }

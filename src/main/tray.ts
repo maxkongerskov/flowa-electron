@@ -15,6 +15,7 @@ export interface TrayModel {
   onReinstall: () => void
   onRepair: () => void
   onQuit: () => void
+  onCheckForUpdates: () => void
   onShortcut: (shortcut: string) => void
   onRecordShortcut: () => void
   onResetShortcut: () => void
@@ -67,6 +68,7 @@ export class FlowaTray {
         { type: 'separator' },
         { label: 'Re-run Installation…', click: m.onReinstall },
         { label: 'Repair Flowa…', click: m.onRepair },
+        { label: 'Check for Updates…', click: m.onCheckForUpdates },
         { type: 'separator' },
         { label: 'Quit Flowa', accelerator: 'CommandOrControl+Q', click: m.onQuit }
       ])

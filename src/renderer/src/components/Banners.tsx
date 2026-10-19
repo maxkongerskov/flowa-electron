@@ -1,5 +1,6 @@
 // Port of Flowa/Sections/Banners.swift.
 import { OctagonAlert, TriangleAlert, X } from 'lucide-react'
+import type { UpdateState } from '@shared/types'
 
 export type BannerSeverity = 'warning' | 'danger'
 
@@ -48,6 +49,32 @@ export function ErrorBanner({ message, onDismiss }: { message: string; onDismiss
 
 export function PermissionBanner(p: { title: string; detail: string; actionTitle: string; action: () => void }) {
   return <StatusBanner severity="warning" {...p} />
+}
+
+/** Quiet yellow note when a newer GitHub release exists, plus manual-check results. */
+export function UpdateBanner(props: { state: UpdateState; onOpen: () => void; onDismiss: () => void }) {
+  const state = props.state
+  if (state.kind === 'available') {
+    return (
+      <StatusBanner
+        severity="warning"
+        title={`Flowa ${state.version} is available`}
+        detail={state.notes || 'A newer release is ready to download.'}
+        actionTitle={state.downloadUrl ? 'Download' : 'View'}
+        action={props.onOpen}
+      />
+    )
+  }
+  if (state.kind !== 'current' && state.kind !== 'error' && state.kind !== 'skipped') return null
+  const text = state.kind === 'current' ? "You're on the latest version." : state.message
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: state.kind === 'error' ? 'var(--warning)' : 'var(--text-secondary)' }}>
+      <span style={{ flex: 1 }}>{text}</span>
+      <button className="icon-btn" title="Dismiss" onClick={props.onDismiss} style={{ width: 18, height: 18, color: 'var(--text-tertiary)' }}>
+        <X size={11} strokeWidth={3} />
+      </button>
+    </div>
+  )
 }
 
 export function ConflictBanner({ behavior, onFix }: { behavior: string; onFix: () => void }) {

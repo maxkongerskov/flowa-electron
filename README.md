@@ -223,8 +223,9 @@ The model loads in 1–4 s.
 | Preferences (UserDefaults keys) | `store.ts` → `prefs.json` | ✅ same keys |
 | Recent dictations JSON | `recent.ts` | ✅ format-compatible (sorted keys, ISO 8601, upper-case UUIDs) |
 | Language catalog (99 + auto) | `languages.ts` | ✅ generated from `LanguageOption.swift` |
-| Unit tests (Swift `FlowaTests`) | `tests/*.test.ts` (83) | ✅ logic tests ported, including shortcut validation, migration, and the recorder. 🟡 the E2E fixtures run through the dev self-test, not under vitest |
-| Code signing / notarization / Sparkle-style updates | – | ⛔ not done yet (needs certificates) |
+| Unit tests (Swift `FlowaTests`) | `tests/*.test.ts` (99) | ✅ logic tests ported, including shortcut validation, migration, the recorder, and update checks. 🟡 the E2E fixtures run through the dev self-test, not under vitest |
+| Code signing / notarization | – | ⛔ not done yet (needs certificates) |
+| Update check | `electron-updater` → GitHub `latest*.yml`, Home banner | 🟡 launch + Check for Updates. Quiet banner with notes and a download / release link. No silent replace until the app is signed |
 
 ## Platform-dependent parts and their equivalents
 
