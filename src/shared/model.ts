@@ -13,13 +13,37 @@
 export const swiftModelVariant = 'openai_whisper-large-v3-v20240930_turbo'
 export const hfCheckpoint = 'openai/whisper-large-v3-turbo'
 
-export const ggmlModel = {
+export interface GgmlWeights {
+  fileName: string
+  url: string
+  sha1: string
+  approxBytes: number
+}
+
+/** Default model. SHA-1 from whisper.cpp v1.9.5 models/README.md. */
+export const ggmlModel: GgmlWeights = {
   fileName: 'ggml-large-v3-turbo.bin',
   url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin',
-  /** SHA-1 published in whisper.cpp/models/README.md for ggml-large-v3-turbo.bin. */
   sha1: '4af2b29d7ec73d781377bfd1758ca957a807e941',
   approxBytes: 1_624_555_275
-} as const
+}
+
+/**
+ * OpenAI Whisper small, multilingual (not small.en). Same ggml f16 conversion
+ * whisper.cpp publishes. SHA-1 from whisper.cpp v1.9.5 models/README.md.
+ * 487,601,967 bytes on Hugging Face.
+ */
+export const ggmlSmall: GgmlWeights = {
+  fileName: 'ggml-small.bin',
+  url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin',
+  sha1: '55356645c2b361a969dfd0ef2c5a50d530afd8d5',
+  approxBytes: 487_601_967
+}
+
+/** Weights for a speech-model id. Anything other than Whisper Small is Turbo. */
+export function ggmlWeightsFor(id: string): GgmlWeights {
+  return id === 'whisper-small' ? ggmlSmall : ggmlModel
+}
 
 /** Pinned whisper.cpp release that the setup script builds. */
 export const whisperCppTag = 'v1.9.5'

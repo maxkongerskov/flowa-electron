@@ -27,29 +27,12 @@ if ! xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>
 
 # ---- preflight ---------------------------------------------------------------
 [ -f "$MODEL" ] || { echo "Missing $MODEL (copy it from ~/Library/Application Support/Flowa-Electron/models/, e.g. cp -c)" >&2; exit 1; }
-# Parakeet is optional. When models/parakeet-tdt-0.6b-v3/encoder.int8.onnx is
-# staged (`npm run setup:parakeet`), electron-builder.release.cjs bundles it
-# next to the Whisper ggml file. sherpa-onnx (`npm run setup:sherpa`) is picked
-# up with resources/bin when that directory is present.
-if [ -f models/parakeet-tdt-0.6b-v3/encoder.int8.onnx ]; then
-  echo "Parakeet 0.6B weights staged — they will be bundled."
+# Whisper Small is optional. When models/ggml-small.bin is staged
+# (`npm run setup:small`), electron-builder.release.cjs bundles it next to Turbo.
+if [ -f models/ggml-small.bin ]; then
+  echo "Whisper Small staged — it will be bundled."
 else
-  echo "Parakeet 0.6B weights not staged (optional). npm run setup:parakeet"
-fi
-# sherpa-onnx-offline loads libonnxruntime from its own directory
-# (@loader_path / $ORIGIN). sherpa/lib/ is not on that search path.
-for ARCH in arm64 x64; do
-  SHERPA_DIR="resources/bin/darwin-${ARCH}/sherpa"
-  if [ -e "$SHERPA_DIR/sherpa-onnx-offline" ]; then
-    for lib in libonnxruntime.dylib libsherpa-onnx-c-api.dylib libsherpa-onnx-cxx-api.dylib; do
-      [ -e "$SHERPA_DIR/$lib" ] || { echo "Missing $SHERPA_DIR/$lib — re-run npm run setup:sherpa so shared libraries sit beside sherpa-onnx-offline." >&2; exit 1; }
-    done
-  fi
-done
-LINUX_SHERPA="resources/bin/linux-x64/sherpa"
-if [ -e "$LINUX_SHERPA/sherpa-onnx-offline" ] && [ ! -e "$LINUX_SHERPA/libonnxruntime.so" ]; then
-  echo "Missing $LINUX_SHERPA/libonnxruntime.so — re-run npm run setup:sherpa." >&2
-  exit 1
+  echo "Whisper Small not staged (optional). npm run setup:small"
 fi
 [ "$(shasum -a 1 "$MODEL" | cut -d' ' -f1)" = "$MODEL_SHA1" ] || { echo "$MODEL: SHA-1 mismatch" >&2; exit 1; }
 for d in darwin-arm64/whisper-server darwin-x64/whisper-server win32-x64/whisper-server.exe linux-x64/whisper-server; do

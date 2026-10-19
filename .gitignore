@@ -11,14 +11,10 @@ vendor/
 resources/bin/
 
 # Model weights are never committed.
-# Whisper: `npm run setup:model` → models/ggml-large-v3-turbo.bin
-# Parakeet: `npm run setup:parakeet` → models/parakeet-tdt-0.6b-v3/*.onnx
+# Whisper Turbo: `npm run setup:model` → models/ggml-large-v3-turbo.bin
+# Whisper Small: `npm run setup:small` → models/ggml-small.bin
 models/*.bin
 models/*.partial
-models/**/*.onnx
-models/**/*.partial
-models/**/*.tar.bz2
-models/parakeet-tdt-0.6b-v3/
 
 # Compiled macOS helper (rebuilt by `npm run setup:mac-helper`)
 resources/mac/flowa-helper

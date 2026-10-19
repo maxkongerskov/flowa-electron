@@ -19,7 +19,7 @@ export const PrefKey = {
   shortcut: 'flowa.shortcut',
   /** `gpu` (automatic Metal / CUDA / Vulkan), an explicit backend, or `cpu`. */
   hardware: 'flowa.hardware',
-  /** `whisper-turbo` (default) or `parakeet-tdt-0.6b-v3`. */
+  /** `whisper-turbo` (default) or `whisper-small`. A saved Parakeet id falls back to Turbo. */
   speechModel: 'flowa.speechModel'
 } as const
 

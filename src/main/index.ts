@@ -154,7 +154,7 @@ async function main(): Promise<void> {
         recordNonce
       },
       engine: { modelName: t.modelName, ...t.engineInfo },
-      engineNotices: collectEngineNotices(t.notice, prefs.get(PrefKey.speechModel), prefs.get(PrefKey.language)),
+      engineNotices: collectEngineNotices(t.notice),
       update: updates.state
     }
   }

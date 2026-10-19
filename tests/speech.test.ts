@@ -1,13 +1,12 @@
 import fs from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { cliArgs, serverArgs } from '@shared/model'
+import { cliArgs, ggmlModel, ggmlSmall, ggmlWeightsFor, serverArgs } from '@shared/model'
 import { coercePrefs, PrefKey } from '@shared/prefs'
 import {
   assumedWhisperManifest, collectEngineNotices, gpuFallbackNote, hardwareChoices, isHardwarePref, isSpeechModelId,
   type WhisperManifest,
-  missingRuntimeNote, missingWeightsNote, normalizeProviders, normalizeWhisperManifest, parakeetCliArgs, parakeetGpuBackends,
-  parakeetLanguageCodes, parakeetModelId, parakeetWeights, parseSherpaTranscript, selectBackend, sherpaGpuFailed,
-  speechModelChoices, whisperGpuBackends, whisperLogsShowGpuFailure, whisperTurboId, sherpaOnnxTag, parakeetArchiveUrl
+  normalizeWhisperManifest, selectBackend, speechModelChoices, speechModelHint, whisperGpuBackends, whisperLogsShowGpuFailure,
+  whisperSmallId, whisperTurboId
 } from '@shared/speech'
 
 const macMetal = assumedWhisperManifest('darwin')
@@ -20,21 +19,34 @@ const vulkanGpu = { metal: false, nvidia: false, vulkan: true }
 const macProbe = { metal: true, nvidia: false, vulkan: false }
 
 describe('speech model ids', () => {
-  it('accepts the two shipped models and rejects anything else', () => {
+  it('accepts Turbo and Small, and rejects Parakeet and anything else', () => {
     expect(isSpeechModelId('whisper-turbo')).toBe(true)
-    expect(isSpeechModelId('parakeet-tdt-0.6b-v3')).toBe(true)
+    expect(isSpeechModelId('whisper-small')).toBe(true)
+    expect(isSpeechModelId('parakeet-tdt-0.6b-v3')).toBe(false)
     expect(isSpeechModelId('whisper-large')).toBe(false)
     expect(isSpeechModelId(1)).toBe(false)
-    expect(speechModelChoices.map((m) => m.id)).toEqual([whisperTurboId, parakeetModelId])
+    expect(speechModelChoices.map((m) => m.id)).toEqual([whisperTurboId, whisperSmallId])
+    expect(speechModelChoices.map((m) => m.label)).toEqual(['Whisper Turbo', 'Whisper Small'])
   })
-  it('lists Parakeet weight files and includes English in the EU set', () => {
-    expect(parakeetWeights.map((w) => w.name)).toEqual(['encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt'])
-    expect(parakeetLanguageCodes).toContain('en')
-    expect(parakeetLanguageCodes).toHaveLength(25)
+  it('keeps Turbo as the default weights and points Small at ggml-small.bin', () => {
+    expect(ggmlWeightsFor('whisper-turbo')).toEqual(ggmlModel)
+    expect(ggmlWeightsFor('whisper-small')).toEqual(ggmlSmall)
+    expect(ggmlWeightsFor('parakeet-tdt-0.6b-v3').fileName).toBe('ggml-large-v3-turbo.bin')
+    expect(ggmlSmall.fileName).toBe('ggml-small.bin')
+    expect(ggmlSmall.sha1).toBe('55356645c2b361a969dfd0ef2c5a50d530afd8d5')
+    expect(ggmlSmall.approxBytes).toBe(487_601_967)
+    expect(ggmlModel.fileName).toBe('ggml-large-v3-turbo.bin')
+    expect(serverArgs(ggmlSmall.fileName, 9, 2, true)).toContain('ggml-small.bin')
+    expect(serverArgs(ggmlModel.fileName, 9, 2, true)).toContain('ggml-large-v3-turbo.bin')
+    expect(speechModelHint('whisper-small')).toContain('Whisper Small')
+    expect(speechModelHint('whisper-turbo')).toContain('large-v3-turbo')
   })
-  it('pins the fetch scripts to the catalog', () => {
-    expect(fs.readFileSync('scripts/fetch-sherpa.mjs', 'utf8')).toContain(`const SHERPA = '${sherpaOnnxTag.slice(1)}'`)
-    expect(fs.readFileSync('scripts/fetch-parakeet.mjs', 'utf8')).toContain(parakeetArchiveUrl)
+  it('pins the fetch script to both ggml files', () => {
+    const script = fs.readFileSync('scripts/fetch-model.mjs', 'utf8')
+    expect(script).toContain(ggmlModel.sha1)
+    expect(script).toContain(ggmlSmall.sha1)
+    expect(script).toContain(ggmlSmall.fileName)
+    expect(script).toContain(ggmlModel.fileName)
   })
 })
 
@@ -47,9 +59,11 @@ describe('hardware prefs', () => {
     expect(PrefKey.speechModel).toBe('flowa.speechModel')
   })
   it('keeps valid values and drops garbage', () => {
-    const ok = coercePrefs({ 'flowa.hardware': 'vulkan', 'flowa.speechModel': 'parakeet-tdt-0.6b-v3', 'flowa.language': 'en' }, 'linux')
+    const ok = coercePrefs({ 'flowa.hardware': 'vulkan', 'flowa.speechModel': 'whisper-small', 'flowa.language': 'en' }, 'linux')
     expect(ok[PrefKey.hardware]).toBe('vulkan')
-    expect(ok[PrefKey.speechModel]).toBe('parakeet-tdt-0.6b-v3')
+    expect(ok[PrefKey.speechModel]).toBe('whisper-small')
+    const retired = coercePrefs({ 'flowa.speechModel': 'parakeet-tdt-0.6b-v3' }, 'darwin')
+    expect(retired[PrefKey.speechModel]).toBe('whisper-turbo')
     const bad = coercePrefs({ 'flowa.hardware': 'tpu', 'flowa.speechModel': 'canary' }, 'win32')
     expect(bad[PrefKey.hardware]).toBe('gpu')
     expect(bad[PrefKey.speechModel]).toBe('whisper-turbo')
@@ -68,7 +82,7 @@ describe('backend selection', () => {
   })
   it('uses CUDA on NVIDIA machines when that binary is staged', () => {
     const plan = selectBackend('gpu', 'linux', nvidia, whisperGpuBackends(withCuda), withCuda, 'Whisper Turbo')
-    expect(plan).toMatchObject({ backend: 'cuda', whisperBinary: 'cuda', parakeetProvider: 'cuda', fellBack: false })
+    expect(plan).toMatchObject({ backend: 'cuda', whisperBinary: 'cuda', fellBack: false })
   })
   it('uses Vulkan when CUDA is not the right fit', () => {
     const onlyVulkan = selectBackend('gpu', 'win32', vulkanGpu, whisperGpuBackends(withVulkan), withVulkan, 'Whisper Turbo')
@@ -84,55 +98,30 @@ describe('backend selection', () => {
     expect(auto.whisperUseGpu).toBe(false)
     expect(auto.note).toBe(gpuFallbackNote('Whisper Turbo', 'gpu'))
     expect(auto.note).toContain('CPU')
-    const explicit = selectBackend('cuda', 'darwin', macProbe, ['metal'], macMetal, 'Parakeet 0.6B')
+    const explicit = selectBackend('cuda', 'darwin', macProbe, ['metal'], macMetal, 'Whisper Small')
     expect(explicit.backend).toBe('cpu')
     expect(explicit.note).toContain('NVIDIA CUDA')
-    expect(explicit.note).toContain('Parakeet 0.6B')
+    expect(explicit.note).toContain('Whisper Small')
   })
   it('honours an explicit CPU choice with no fallback note', () => {
     const plan = selectBackend('cpu', 'darwin', macProbe, ['metal'], macMetal, 'Whisper Turbo')
     expect(plan).toMatchObject({ backend: 'cpu', fellBack: false, note: null, whisperUseGpu: false })
   })
-  it('maps Parakeet Metal to CoreML and Vulkan without a provider to CPU', () => {
-    const metal = selectBackend('metal', 'darwin', macProbe, parakeetGpuBackends(['cpu', 'coreml']), macMetal, 'Parakeet 0.6B')
-    expect(metal).toMatchObject({ backend: 'metal', parakeetProvider: 'coreml', fellBack: false })
-    const vulkan = selectBackend('vulkan', 'linux', vulkanGpu, parakeetGpuBackends(['cpu']), cpuOnly, 'Parakeet 0.6B')
-    expect(vulkan.backend).toBe('cpu')
-    expect(vulkan.fellBack).toBe(true)
-    expect(vulkan.note).toContain('Vulkan')
+  it('uses the same GPU plan for Whisper Small as for Turbo', () => {
+    const turbo = selectBackend('gpu', 'darwin', macProbe, whisperGpuBackends(macMetal), macMetal, 'Whisper Turbo')
+    const small = selectBackend('gpu', 'darwin', macProbe, whisperGpuBackends(macMetal), macMetal, 'Whisper Small')
+    expect(small.backend).toBe(turbo.backend)
+    expect(small.whisperBinary).toBe('default')
+    expect(small.whisperUseGpu).toBe(true)
   })
 })
 
-describe('fallback copy and sherpa output', () => {
-  it('missing-weight and missing-runtime notes name the install path', () => {
-    expect(missingWeightsNote('Parakeet 0.6B', '/tmp/models/parakeet-tdt-0.6b-v3', false)).toContain('encoder.int8.onnx')
-    expect(missingWeightsNote('Parakeet 0.6B', '/tmp/models/parakeet-tdt-0.6b-v3', false)).toContain('npm run setup:parakeet')
-    expect(missingRuntimeNote('Parakeet 0.6B', true)).toContain('sherpa-onnx')
-    const notes = collectEngineNotices(
-      { kind: 'gpu-fallback', message: gpuFallbackNote('Whisper Turbo', 'gpu') },
-      'parakeet-tdt-0.6b-v3',
-      'ja'
-    )
-    expect(notes.map((n) => n.kind)).toEqual(['gpu-fallback', 'language'])
-    expect(collectEngineNotices(null, 'parakeet-tdt-0.6b-v3', 'en')).toEqual([])
-    expect(collectEngineNotices(null, 'whisper-turbo', 'ja')).toEqual([])
-  })
-  it('parses the sherpa JSON transcript and builds CLI args', () => {
-    const sample = 'Started\n{"text": " the quick  brown fox ", "tokens": []}\n'
-    expect(parseSherpaTranscript(sample)).toBe('the quick brown fox')
-    expect(parseSherpaTranscript('no json here')).toBe('')
-    const args = parakeetCliArgs(
-      { encoder: '/m/encoder.int8.onnx', decoder: '/m/decoder.int8.onnx', joiner: '/m/joiner.int8.onnx', tokens: '/m/tokens.txt' },
-      '/tmp/a.wav',
-      'coreml',
-      4
-    )
-    expect(args).toContain('--model-type=nemo_transducer')
-    expect(args).toContain('--provider=coreml')
-    expect(args.at(-1)).toBe('/tmp/a.wav')
-    expect(sherpaGpuFailed('provider=cuda failed', 'cuda')).toBe(true)
-    expect(sherpaGpuFailed('no such file', 'cuda')).toBe(false)
-    expect(sherpaGpuFailed('anything', 'cpu')).toBe(false)
+describe('fallback copy', () => {
+  it('keeps a GPU fallback note and drops nothing else onto it', () => {
+    const notes = collectEngineNotices({ kind: 'gpu-fallback', message: gpuFallbackNote('Whisper Small', 'gpu') })
+    expect(notes.map((n) => n.kind)).toEqual(['gpu-fallback'])
+    expect(notes[0].message).toContain('Whisper Small')
+    expect(collectEngineNotices(null)).toEqual([])
   })
   it('whisper.cpp -ng is the CPU switch and stays a flag the server accepts', () => {
     expect(serverArgs('/m.bin', 9, 2, false)).toContain('-ng')
@@ -146,6 +135,5 @@ describe('fallback copy and sherpa output', () => {
     expect(whisperLogsShowGpuFailure('ggml_vulkan: no devices found', 'vulkan')).toBe(true)
     expect(whisperLogsShowGpuFailure('ggml_metal_init: using Metal', 'metal')).toBe(false)
     expect(normalizeWhisperManifest({ default: ['metal'], binaries: { cuda: true } }, 'linux').default).toEqual(['cpu', 'metal'])
-    expect(normalizeProviders({ providers: ['coreml', 'nope'] })).toEqual(['cpu', 'coreml'])
   })
 })

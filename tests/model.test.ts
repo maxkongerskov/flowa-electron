@@ -1,6 +1,6 @@
 // The model identity and decoding settings must stay identical to Swift Flowa's WhisperKit setup.
 import { describe, expect, it, vi } from 'vitest'
-import { cleanTranscript, cliArgs, decoding, ggmlModel, hfCheckpoint, inferenceFields, serverArgs, swiftModelVariant } from '@shared/model'
+import { cleanTranscript, cliArgs, decoding, ggmlModel, ggmlSmall, hfCheckpoint, inferenceFields, serverArgs, swiftModelVariant } from '@shared/model'
 import { macPermissionResetCommands } from '../src/main/repair'
 
 describe('model parity', () => {
@@ -9,6 +9,8 @@ describe('model parity', () => {
     expect(hfCheckpoint).toBe('openai/whisper-large-v3-turbo')
     expect(ggmlModel.fileName).toBe('ggml-large-v3-turbo.bin')
     expect(ggmlModel.fileName).not.toMatch(/q5|q8/)
+    expect(ggmlSmall.fileName).toBe('ggml-small.bin')
+    expect(ggmlSmall.fileName).not.toMatch(/\.en|q5|q8/)
   })
   it('WhisperKit DecodingOptions defaults', () => {
     expect(decoding).toMatchObject({ temperature: 0, temperatureInc: 0.2, beamSize: 1, logprobThreshold: -1, noSpeechThreshold: 0.6 })

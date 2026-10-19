@@ -47,9 +47,7 @@ npm install                 # also fetches the Electron binary (postinstall)
 npm run setup:mac-helper    # macOS only: builds resources/mac/flowa-helper (fn key + paste)
 npm run setup:whisper       # builds whisper.cpp v1.9.5 → resources/bin/<platform>-<arch>/
 npm run setup:model         # downloads ggml-large-v3-turbo.bin (1.6 GB, sha1-verified) → models/
-npm run setup:parakeet      # optional: Parakeet TDT 0.6B v3 int8 ONNX → models/parakeet-tdt-0.6b-v3/
-npm run setup:sherpa        # optional: sherpa-onnx CLI + libonnxruntime beside it → resources/bin/<platform>-<arch>/sherpa/
-# npm run setup:sherpa -- --cuda    # Linux/Windows x64 CUDA build of sherpa-onnx
+npm run setup:small         # optional: ggml-small.bin (Whisper Small, ~466 MB, sha1-verified) → models/
 # FLOWA_WHISPER_VARIANT=cuda npm run setup:whisper     # whisper-server-cuda
 # FLOWA_WHISPER_VARIANT=vulkan npm run setup:whisper   # whisper-server-vulkan
 npm test                    # unit tests for the ported logic
@@ -58,8 +56,9 @@ npm start                   # build + run the app
 
 `npm run dev` starts the app with hot reload for the renderer.
 
-If you skip `setup:model`, the app downloads the model into its own data folder on first run
-(the "Installing" screen, with resume and sha1 check).
+If you skip `setup:model`, the app downloads Whisper Turbo into its own data folder on first run
+(the "Installing" screen, with resume and sha1 check). Whisper Small downloads the same way
+the first time you select it.
 
 ### Dev self-tests (no hotkey needed)
 
@@ -200,62 +199,45 @@ The model loads in 1–4 s.
 
 ---
 
-## Hardware and Parakeet
+## Hardware and speech model
 
 Home has two dropdowns, stored in `prefs.json` with the same pattern as the other preferences:
 
 | Preference | Key | Default | Values |
 |---|---|---|---|
 | Hardware | `flowa.hardware` | `gpu` | `gpu` (automatic), `metal`, `cuda`, `vulkan`, `cpu` |
-| Speech model | `flowa.speechModel` | `whisper-turbo` | `whisper-turbo`, `parakeet-tdt-0.6b-v3` |
+| Speech model | `flowa.speechModel` | `whisper-turbo` | `whisper-turbo`, `whisper-small` |
 
-**GPU (automatic)** picks a real backend, not a label:
+**Whisper Turbo stays the default.** A saved `parakeet-tdt-0.6b-v3` value is no longer a model and loads as Turbo.
+
+**GPU (automatic)** picks a real backend, not a label. Both speech models use it:
 
 | OS | Automatic choice |
 |---|---|
 | macOS | Apple Metal, when the whisper.cpp binary was built with Metal (the default `npm run setup:whisper` on a Mac) |
-| Windows / Linux with an NVIDIA driver | NVIDIA CUDA, when `whisper-server-cuda` or a CUDA sherpa build is staged |
+| Windows / Linux with an NVIDIA driver | NVIDIA CUDA, when `whisper-server-cuda` is staged |
 | Windows / Linux otherwise | Vulkan, when a Vulkan whisper.cpp binary is staged and a Vulkan loader (or an NVIDIA driver, for a Vulkan-instead-of-CUDA build) is present |
 | Anything else | CPU |
 
 Picking Metal, CUDA, or Vulkan directly uses that backend. When it isn't staged, or the process fails to start on it, Flowa retries on the CPU and shows a quiet yellow note on Home (the same warning banner as the other in-app status text). There is no dialog and no system notification. Choosing CPU skips the GPU attempt and shows no note.
 
-Whisper still uses whisper.cpp v1.9.5. `-ng` forces CPU. CUDA and Vulkan are extra binaries (`whisper-server-cuda`, `whisper-server-vulkan`) so one `resources/bin` folder can hold more than one backend. `whisper-backends.json` records what the build script compiled.
+Whisper uses whisper.cpp v1.9.5. `-ng` forces CPU. CUDA and Vulkan are extra binaries (`whisper-server-cuda`, `whisper-server-vulkan`) so one `resources/bin` folder can hold more than one backend. `whisper-backends.json` records what the build script compiled. The speech-model dropdown only changes the `-m` file passed to that same binary.
 
-### Parakeet 0.6B
+### Whisper Small
 
-**NVIDIA Parakeet TDT 0.6B v3** (`nvidia/parakeet-tdt-0.6b-v3`, CC-BY-4.0). It is the multilingual European 0.6B model: 25 languages, English included, language detected from the audio. Bulgarian, Croatian, Czech, Danish, Dutch, English, Estonian, Finnish, French, German, Greek, Hungarian, Italian, Latvian, Lithuanian, Maltese, Polish, Portuguese, Romanian, Slovak, Slovenian, Spanish, Swedish, Russian, Ukrainian.
+**OpenAI Whisper small**, multilingual (not `small.en`). Same ggml f16 conversion whisper.cpp publishes, MIT license, about 466 MB:
 
-Flowa does not shell out to NeMo. The runtime is **sherpa-onnx** v1.13.8 (Apache-2.0), the maintained local ONNX runner for this checkpoint, invoked as `sherpa-onnx-offline` with `--model-type=nemo_transducer`. Weights are the int8 export (about 670 MB), gitignored:
-
-| File | Role |
+| | |
 |---|---|
-| `encoder.int8.onnx` | encoder (~652 MB) |
-| `decoder.int8.onnx` | decoder (~12 MB) |
-| `joiner.int8.onnx` | joiner (~6 MB) |
-| `tokens.txt` | vocabulary |
+| File | `ggml-small.bin` |
+| Checkpoint | `openai/whisper-small` |
+| Source | [huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin) |
+| Size | 487,601,967 bytes |
+| SHA-1 | `55356645c2b361a969dfd0ef2c5a50d530afd8d5` (whisper.cpp v1.9.5 `models/README.md`) |
 
-Source archive: [sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2](https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2). `npm run setup:parakeet` downloads it into `models/parakeet-tdt-0.6b-v3/`. The app also looks in `<appData>/Flowa-Electron/models/parakeet-tdt-0.6b-v3/` and can download the same files from [csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8](https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8) when you press Download on the yellow note. Missing weights or a missing sherpa binary stay on Home with that note; they do not crash.
+`npm run setup:small` downloads it into `models/`. The app also looks in `<appData>/Flowa-Electron/models/ggml-small.bin` and downloads that file the first time Small is selected, the same way Turbo downloads `ggml-large-v3-turbo.bin`. Selecting Small restarts whisper.cpp with `ggml-small.bin`. Selecting Turbo again uses `ggml-large-v3-turbo.bin`. A Turbo file on disk does not satisfy Small.
 
-Parakeet GPU backends:
-
-| Preference | What runs |
-|---|---|
-| Apple Metal | ONNX Runtime **CoreML** (`--provider=coreml`) on the macOS sherpa build. The UI calls this Apple Metal. |
-| NVIDIA CUDA | `--provider=cuda` with the sherpa-cuda build from `npm run setup:sherpa -- --cuda` |
-| Vulkan | sherpa-onnx has no Vulkan execution provider. The preference falls back to CPU with the yellow note. Whisper's Vulkan path is the one that runs Vulkan. |
-| CPU | `--provider=cpu` |
-
-A release build bundles Parakeet the same way it bundles Whisper: stage the files, then `scripts/build-release.sh` / `electron-builder.release.cjs` copies `models/parakeet-tdt-0.6b-v3/` when `encoder.int8.onnx` is present. The ggml file is still required. The multi-GB weights stay gitignored.
-
-`npm run setup:sherpa` copies the offline CLI and its shared libraries into the same directory. On macOS that is `libonnxruntime.dylib`, `libsherpa-onnx-c-api.dylib`, and `libsherpa-onnx-cxx-api.dylib` next to `sherpa-onnx-offline` (not under `sherpa/lib/`). The signed app resolves `@rpath/libonnxruntime.dylib` from `@loader_path`; `DYLD_LIBRARY_PATH` is ignored. `electron-builder` copies the whole `resources/bin/<platform>-<arch>` folder to `Contents/Resources/bin/` with no filter, so those siblings land at:
-
-- `Contents/Resources/bin/sherpa/sherpa-onnx-offline`
-- `Contents/Resources/bin/sherpa/libonnxruntime.dylib`
-- `Contents/Resources/bin/sherpa/libsherpa-onnx-c-api.dylib`
-- `Contents/Resources/bin/sherpa/libsherpa-onnx-cxx-api.dylib`
-
-On a Mac, setup rewrites install names to `@rpath/<basename>`, adds `@loader_path` when it is missing, and ad-hoc signs the rewritten files. `scripts/sign-mac.sh` signs them again with the Developer ID. Linux uses the same flat layout (`libonnxruntime.so` beside the binary, `$ORIGIN`).
+A release build still requires Turbo. `electron-builder.release.cjs` also copies `models/ggml-small.bin` when that file has been staged. Both weights stay gitignored.
 
 ---
 

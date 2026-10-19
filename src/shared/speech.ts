@@ -1,83 +1,28 @@
 // Speech-model catalog, hardware backends, and the pure decisions behind
 // Home → Speech model / Hardware.
 //
-// Whisper Turbo (default) is the existing whisper.cpp path:
-//   ggml-large-v3-turbo.bin  ·  OpenAI whisper-large-v3-turbo  ·  see model.ts
-//   GPU backends are compile-time ggml backends, selected at runtime with
-//   the binary we launch and whisper.cpp's `-ng` (no-gpu) flag:
-//     macOS            Apple Metal     (default setup:whisper build)
-//     Windows/Linux    NVIDIA CUDA     (FLOWA_WHISPER_VARIANT=cuda)
-//     Windows/Linux    Vulkan          (FLOWA_WHISPER_VARIANT=vulkan)
-//     anywhere         CPU             (-ng, or a CPU-only binary)
-//
-// Parakeet 0.6B is NVIDIA Parakeet TDT 0.6B v3, the multilingual European
-// checkpoint (English included). Upstream weights:
-//   https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3
-//   License: CC-BY-4.0 (NVIDIA). 600M params. 25 European languages.
-//   It detects the spoken language; there is no language prompt.
-// We run the sherpa-onnx int8 ONNX export (Apache-2.0 runtime), not the
-// .nemo archive — NeMo itself is a Python stack and a poor fit for the
-// Electron main process. Files, kept next to the Whisper ggml bin:
-//   models/parakeet-tdt-0.6b-v3/encoder.int8.onnx
-//   models/parakeet-tdt-0.6b-v3/decoder.int8.onnx
-//   models/parakeet-tdt-0.6b-v3/joiner.int8.onnx
-//   models/parakeet-tdt-0.6b-v3/tokens.txt
-// Official packed export (same files):
-//   https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2
-// Per-file mirror used for the in-app download:
-//   https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8
-// sherpa-onnx has no Vulkan execution provider. Parakeet's Apple GPU path
-// is ONNX Runtime CoreML (the GPU / Neural Engine), reported in the UI as
-// Apple Metal. CUDA uses a sherpa GPU build (`npm run setup:sherpa -- --cuda`).
-// A Vulkan preference with Parakeet falls back to the CPU.
-
-import { cleanTranscript } from './model'
-import { languageDisplayName } from './languages'
+// Both models are whisper.cpp ggml files (see model.ts). Turbo is the default.
+//   whisper-turbo   ggml-large-v3-turbo.bin   OpenAI whisper-large-v3-turbo
+//   whisper-small   ggml-small.bin            OpenAI whisper small (multilingual)
+// GPU backends are compile-time ggml backends, selected at runtime with
+// the binary we launch and whisper.cpp's `-ng` (no-gpu) flag:
+//   macOS            Apple Metal     (default setup:whisper build)
+//   Windows/Linux    NVIDIA CUDA     (FLOWA_WHISPER_VARIANT=cuda)
+//   Windows/Linux    Vulkan          (FLOWA_WHISPER_VARIANT=vulkan)
+//   anywhere         CPU             (-ng, or a CPU-only binary)
+// The selected model only changes the `-m` weights file. The same server
+// binary and the same Metal / CUDA / Vulkan / CPU plan run either one.
 
 export const whisperTurboId = 'whisper-turbo' as const
-export const parakeetModelId = 'parakeet-tdt-0.6b-v3' as const
+export const whisperSmallId = 'whisper-small' as const
 
-export type SpeechModelId = typeof whisperTurboId | typeof parakeetModelId
+export type SpeechModelId = typeof whisperTurboId | typeof whisperSmallId
 
 /** `gpu` picks Metal, CUDA, or Vulkan from the machine and the staged build. */
 export type HardwarePref = 'gpu' | 'metal' | 'cuda' | 'vulkan' | 'cpu'
 export type GpuBackend = 'metal' | 'cuda' | 'vulkan'
 export type RuntimeBackend = 'cpu' | GpuBackend
-export type ParakeetProvider = 'cpu' | 'coreml' | 'cuda' | 'vulkan'
 export type WhisperBinaryKind = 'default' | 'cuda' | 'vulkan'
-
-export const parakeetDirName = 'parakeet-tdt-0.6b-v3'
-export const parakeetUpstreamRepo = 'nvidia/parakeet-tdt-0.6b-v3'
-export const parakeetExportRepo = 'csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8'
-/** sherpa-onnx release whose offline CLI we stage. Keep in sync with scripts/fetch-sherpa.mjs. */
-export const sherpaOnnxTag = 'v1.13.8'
-
-export const parakeetArchiveUrl =
-  'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2'
-
-const parakeetFileBase = `https://huggingface.co/${parakeetExportRepo}/resolve/main`
-
-export interface ParakeetWeight {
-  name: string
-  url: string
-  minBytes: number
-  approxBytes: number
-}
-
-export const parakeetWeights: readonly ParakeetWeight[] = [
-  { name: 'encoder.int8.onnx', url: `${parakeetFileBase}/encoder.int8.onnx`, minBytes: 600 * 1024 * 1024, approxBytes: 652 * 1024 * 1024 },
-  { name: 'decoder.int8.onnx', url: `${parakeetFileBase}/decoder.int8.onnx`, minBytes: 8 * 1024 * 1024, approxBytes: 12 * 1024 * 1024 },
-  { name: 'joiner.int8.onnx', url: `${parakeetFileBase}/joiner.int8.onnx`, minBytes: 4 * 1024 * 1024, approxBytes: 7 * 1024 * 1024 },
-  { name: 'tokens.txt', url: `${parakeetFileBase}/tokens.txt`, minBytes: 1024, approxBytes: 100 * 1024 }
-]
-
-/**
- * Languages Parakeet TDT 0.6B v3 actually transcribes (NVIDIA model card).
- * English is included. The model auto-detects; sherpa-onnx is not given a language code.
- */
-export const parakeetLanguageCodes = [
-  'bg', 'hr', 'cs', 'da', 'nl', 'en', 'et', 'fi', 'fr', 'de', 'el', 'hu', 'it', 'lv', 'lt', 'mt', 'pl', 'pt', 'ro', 'sk', 'sl', 'es', 'sv', 'ru', 'uk'
-] as const
 
 export const hardwareChoices: ReadonlyArray<{ id: HardwarePref; label: string }> = [
   { id: 'gpu', label: 'GPU (automatic)' },
@@ -89,11 +34,11 @@ export const hardwareChoices: ReadonlyArray<{ id: HardwarePref; label: string }>
 
 export const speechModelChoices: ReadonlyArray<{ id: SpeechModelId; label: string }> = [
   { id: whisperTurboId, label: 'Whisper Turbo' },
-  { id: parakeetModelId, label: 'Parakeet 0.6B' }
+  { id: whisperSmallId, label: 'Whisper Small' }
 ]
 
 export function isSpeechModelId(value: unknown): value is SpeechModelId {
-  return value === whisperTurboId || value === parakeetModelId
+  return value === whisperTurboId || value === whisperSmallId
 }
 
 export function isHardwarePref(value: unknown): value is HardwarePref {
@@ -105,8 +50,8 @@ export function speechModelById(id: SpeechModelId): { id: SpeechModelId; label: 
 }
 
 export function speechModelHint(id: SpeechModelId): string {
-  if (id === parakeetModelId) {
-    return 'NVIDIA Parakeet TDT 0.6B v3. 25 European languages, including English. It detects the language from your voice.'
+  if (id === whisperSmallId) {
+    return 'OpenAI Whisper Small, on this computer, via whisper.cpp. Lighter than Turbo, and multilingual.'
   }
   return 'OpenAI Whisper large-v3-turbo, on this computer, via whisper.cpp.'
 }
@@ -130,7 +75,7 @@ export function backendLabel(backend: RuntimeBackend): string {
 }
 
 export interface EngineNotice {
-  kind: 'gpu-fallback' | 'missing-model' | 'missing-runtime' | 'language'
+  kind: 'gpu-fallback'
   message: string
 }
 
@@ -140,33 +85,8 @@ export function gpuFallbackNote(modelLabel: string, requested: 'gpu' | GpuBacken
   return `${what} isn't available for ${modelLabel} on this computer, so Flowa is using the CPU.`
 }
 
-export function missingWeightsNote(modelLabel: string, dir: string, packaged: boolean): string {
-  const where = `Place encoder.int8.onnx, decoder.int8.onnx, joiner.int8.onnx, and tokens.txt in ${dir}.`
-  if (packaged) return `${modelLabel} weights aren't installed. ${where}`
-  return `${modelLabel} weights aren't installed. ${where} Or run npm run setup:parakeet.`
-}
-
-export function missingRuntimeNote(modelLabel: string, packaged: boolean): string {
-  if (packaged) return `${modelLabel} needs the sherpa-onnx engine, and this install doesn't include it.`
-  return `${modelLabel} needs sherpa-onnx. Run npm run setup:sherpa, then try again.`
-}
-
-export function languageNotice(modelId: SpeechModelId, languageCode: string): EngineNotice | null {
-  if (modelId !== parakeetModelId) return null
-  if (languageCode === 'auto' || (parakeetLanguageCodes as readonly string[]).includes(languageCode)) return null
-  const name = languageDisplayName(languageCode)
-  return {
-    kind: 'language',
-    message: `Parakeet 0.6B transcribes 25 European languages and detects which one you're speaking. For ${name}, choose Whisper Turbo.`
-  }
-}
-
-export function collectEngineNotices(runtime: EngineNotice | null, modelId: SpeechModelId, languageCode: string): EngineNotice[] {
-  const notes: EngineNotice[] = []
-  if (runtime) notes.push(runtime)
-  const lang = languageNotice(modelId, languageCode)
-  if (lang) notes.push(lang)
-  return notes
+export function collectEngineNotices(runtime: EngineNotice | null): EngineNotice[] {
+  return runtime ? [runtime] : []
 }
 
 export interface GpuProbe {
@@ -223,28 +143,8 @@ export function whisperGpuBackends(manifest: WhisperManifest): GpuBackend[] {
   return (['metal', 'cuda', 'vulkan'] as const).filter((b) => set.has(b))
 }
 
-export function parakeetGpuBackends(providers: readonly string[]): GpuBackend[] {
-  const set = new Set(providers)
-  const out: GpuBackend[] = []
-  if (set.has('coreml')) out.push('metal')
-  if (set.has('cuda')) out.push('cuda')
-  if (set.has('vulkan')) out.push('vulkan')
-  return out
-}
-
-export function normalizeProviders(raw: unknown): string[] {
-  const known = new Set(['cpu', 'coreml', 'cuda', 'vulkan'])
-  if (!raw || typeof raw !== 'object') return ['cpu']
-  const list = (raw as { providers?: unknown }).providers
-  if (!Array.isArray(list)) return ['cpu']
-  const out = list.filter((x): x is string => typeof x === 'string' && known.has(x))
-  if (!out.includes('cpu')) out.unshift('cpu')
-  return out
-}
-
 export interface BackendPlan {
   backend: RuntimeBackend
-  parakeetProvider: ParakeetProvider
   whisperUseGpu: boolean
   whisperBinary: WhisperBinaryKind
   fellBack: boolean
@@ -277,7 +177,6 @@ function planFor(
 ): BackendPlan {
   return {
     backend,
-    parakeetProvider: backend === 'metal' ? 'coreml' : backend,
     whisperUseGpu: backend !== 'cpu',
     whisperBinary: whisperBinaryKind(backend, builds),
     fellBack,
@@ -329,52 +228,3 @@ export function whisperLogsShowGpuFailure(logs: string, backend: GpuBackend): bo
   return false
 }
 
-export interface ParakeetPaths {
-  encoder: string
-  decoder: string
-  joiner: string
-  tokens: string
-}
-
-/** argv for sherpa-onnx-offline. Provider is cpu, coreml (Apple GPU), cuda, or vulkan. */
-export function parakeetCliArgs(files: ParakeetPaths, wavPath: string, provider: ParakeetProvider, threads: number): string[] {
-  return [
-    `--encoder=${files.encoder}`,
-    `--decoder=${files.decoder}`,
-    `--joiner=${files.joiner}`,
-    `--tokens=${files.tokens}`,
-    '--model-type=nemo_transducer',
-    `--provider=${provider}`,
-    `--num-threads=${String(threads)}`,
-    '--decoding-method=greedy_search',
-    wavPath
-  ]
-}
-
-/** Pull the transcript out of sherpa-onnx-offline's JSON line. */
-export function parseSherpaTranscript(output: string): string {
-  const lines = output.split(/\r?\n/)
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i].trim()
-    if (!line.startsWith('{')) continue
-    try {
-      const parsed = JSON.parse(line) as { text?: unknown }
-      if (typeof parsed.text === 'string') return cleanTranscript(parsed.text)
-    } catch {
-      /* a log line that merely starts with a brace */
-    }
-  }
-  return ''
-}
-
-/**
- * A non-zero sherpa exit while a GPU provider was requested.
- * The CLI prints its config (including the provider) before most failures,
- * so a GPU-provider run that exits is retried on CPU.
- */
-export function sherpaGpuFailed(output: string, provider: ParakeetProvider): boolean {
-  if (provider === 'cpu') return false
-  const t = output.toLowerCase()
-  if (/no such file|invalid wav|failed to read|expected 1 channel/.test(t)) return false
-  return true
-}
