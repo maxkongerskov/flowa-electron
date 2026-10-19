@@ -16,6 +16,8 @@
     "test": "vitest run",
     "setup:whisper": "node scripts/build-whisper.mjs",
     "setup:model": "node scripts/fetch-model.mjs",
+    "setup:parakeet": "node scripts/fetch-parakeet.mjs",
+    "setup:sherpa": "node scripts/fetch-sherpa.mjs",
     "setup:mac-helper": "bash scripts/build-mac-helper.sh",
     "dist:mac": "bash scripts/build-mac-icons.sh && electron-vite build && electron-builder --mac",
     "dist:win": "electron-vite build && electron-builder --win",

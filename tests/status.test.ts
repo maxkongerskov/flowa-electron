@@ -17,6 +17,7 @@ describe('Transcriber.needsSetup', () => {
     expect(needsSetup({ kind: 'downloading', received: 1, total: 2 }, false)).toBe(true)
     expect(needsSetup({ kind: 'idle' }, false)).toBe(true)
     expect(needsSetup({ kind: 'idle' }, true)).toBe(false)
+    expect(needsSetup({ kind: 'unavailable', message: 'missing' }, false)).toBe(false)
   })
 })
 
@@ -33,6 +34,7 @@ describe('menu bar status / icon', () => {
   const base = { needsSetup: false, permissions: granted, conflict: { kind: 'clean' as const }, isTranscribing: false, keyLabel: 'fn' }
   it('ready text', () => expect(menuStatusText({ ...base, transcriber: { kind: 'ready' } })).toBe('Ready — press fn to dictate'))
   it('error first', () => expect(menuStatusText({ ...base, transcriber: { kind: 'error', message: 'x' } })).toBe('Installation needs attention'))
+  it('missing model stays off the install screen', () => expect(menuStatusText({ ...base, transcriber: { kind: 'unavailable', message: 'x' } })).toBe('Speech model not installed'))
   it('preparing countdown', () => expect(menuStatusText({ ...base, needsSetup: true, transcriber: { kind: 'preparing', progress: 0.5 } })).toBe('Installing… 1:00'))
   it('permission order', () => {
     expect(menuStatusText({ ...base, transcriber: { kind: 'ready' }, permissions: { ...granted, microphone: false, accessibility: false } })).toBe('Microphone permission missing')

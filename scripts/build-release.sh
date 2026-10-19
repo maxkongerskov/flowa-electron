@@ -27,6 +27,15 @@ if ! xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>
 
 # ---- preflight ---------------------------------------------------------------
 [ -f "$MODEL" ] || { echo "Missing $MODEL (copy it from ~/Library/Application Support/Flowa-Electron/models/, e.g. cp -c)" >&2; exit 1; }
+# Parakeet is optional. When models/parakeet-tdt-0.6b-v3/encoder.int8.onnx is
+# staged (`npm run setup:parakeet`), electron-builder.release.cjs bundles it
+# next to the Whisper ggml file. sherpa-onnx (`npm run setup:sherpa`) is picked
+# up with resources/bin when that directory is present.
+if [ -f models/parakeet-tdt-0.6b-v3/encoder.int8.onnx ]; then
+  echo "Parakeet 0.6B weights staged — they will be bundled."
+else
+  echo "Parakeet 0.6B weights not staged (optional). npm run setup:parakeet"
+fi
 [ "$(shasum -a 1 "$MODEL" | cut -d' ' -f1)" = "$MODEL_SHA1" ] || { echo "$MODEL: SHA-1 mismatch" >&2; exit 1; }
 for d in darwin-arm64/whisper-server darwin-x64/whisper-server win32-x64/whisper-server.exe linux-x64/whisper-server; do
   [ -f "resources/bin/$d" ] || { echo "Missing engine resources/bin/$d" >&2; exit 1; }

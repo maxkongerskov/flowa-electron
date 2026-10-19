@@ -8,7 +8,7 @@ import { defaultShortcut, needsInputMonitoring, shortcutKind, shortcutLabel, val
 import { isEphemeralAggregateUID } from '@shared/micDeviceKind'
 import { allGranted, machineNoun, menuStatusText, trayIconName } from '@shared/status'
 import { languageDisplayName } from '@shared/languages'
-import { swiftModelVariant } from '@shared/model'
+import { isHardwarePref, isSpeechModelId, collectEngineNotices } from '@shared/speech'
 import { configureUserDataPath } from './paths'
 import { prefs } from './store'
 import { permissions } from './permissions'
@@ -153,7 +153,8 @@ async function main(): Promise<void> {
         active: hotkey.isAuthorized,
         recordNonce
       },
-      engine: { modelName: swiftModelVariant, ...t.engineInfo },
+      engine: { modelName: t.modelName, ...t.engineInfo },
+      engineNotices: collectEngineNotices(t.notice, prefs.get(PrefKey.speechModel), prefs.get(PrefKey.language)),
       update: updates.state
     }
   }
@@ -309,7 +310,10 @@ async function main(): Promise<void> {
     }
   })
   fnConflict.on('change', broadcast)
-  prefs.on('change', broadcast)
+  prefs.on('change', (key: string) => {
+    if (key === PrefKey.hardware || key === PrefKey.speechModel) pipeline.transcriber.reloadForPrefs()
+    broadcast()
+  })
 
   // RootView.syncFirstRunWithTranscriber
   pipeline.transcriber.on('change', () => {
@@ -349,6 +353,12 @@ async function main(): Promise<void> {
         break
       case PrefKey.shortcut:
         return applyShortcut(value)
+      case PrefKey.hardware:
+        if (isHardwarePref(value)) prefs.set(key, value)
+        break
+      case PrefKey.speechModel:
+        if (isSpeechModelId(value)) prefs.set(key, value)
+        break
     }
   })
 
@@ -370,6 +380,7 @@ async function main(): Promise<void> {
     dismissError: () => pipeline.dismissError(),
     reinstallSpeechModel: () => pipeline.reinstallSpeechModel(),
     retryInstall: () => pipeline.transcriber.loadIfNeeded(),
+    downloadSpeechModel: () => pipeline.transcriber.downloadSelectedModel(),
     setLaunchAtLogin: (v) => {
       if (typeof v !== 'boolean') return
       setLoginItemEnabled(v)

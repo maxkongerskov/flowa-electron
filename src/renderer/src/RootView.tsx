@@ -3,6 +3,7 @@
 //   ② InstallingView — one-time engine prepare (+ first-run download here)
 //   ③ HomeView       — main app; banners surface revoked permissions.
 
+import { parakeetModelId } from '@shared/speech'
 import { useAppState } from './useAppState'
 import { OnboardingView } from './views/OnboardingView'
 import { InstallingView } from './views/InstallingView'
@@ -12,7 +13,9 @@ export function RootView() {
   const s = useAppState()
   if (!s) return null
   const shouldShowOnboarding = !s.prefs['flowa.onboardingComplete'] && !s.allGranted
-  const shouldShowInstalling = s.needsSetup
+  // Parakeet can be missing while Whisper Turbo is one dropdown away, so that
+  // setup stays on Home (yellow note + Download) instead of the install screen.
+  const shouldShowInstalling = s.needsSetup && s.prefs['flowa.speechModel'] !== parakeetModelId
   if (shouldShowOnboarding) {
     return <OnboardingView key="onboarding" state={s} onComplete={() => window.flowa.setPref('flowa.onboardingComplete', true)} />
   }

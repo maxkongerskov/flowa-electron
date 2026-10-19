@@ -3,6 +3,7 @@
 // app's UserDefaults keys so settings could be migrated 1:1.
 
 import { defaultShortcut, FN_SHORTCUT, migratedShortcut } from './shortcut'
+import { isHardwarePref, isSpeechModelId, whisperTurboId, type HardwarePref, type SpeechModelId } from './speech'
 
 export { FN_SHORTCUT, defaultShortcut }
 
@@ -15,7 +16,11 @@ export const PrefKey = {
   /** Integer minutes. Default / recommended hard limit: 60. 0 = no limit. */
   maxDurationMinutes: 'flowa.maxDurationMinutes',
   /** Dictation toggle. `fn`, a modifier tapped alone, or an Electron accelerator. */
-  shortcut: 'flowa.shortcut'
+  shortcut: 'flowa.shortcut',
+  /** `gpu` (automatic Metal / CUDA / Vulkan), an explicit backend, or `cpu`. */
+  hardware: 'flowa.hardware',
+  /** `whisper-turbo` (default) or `parakeet-tdt-0.6b-v3`. */
+  speechModel: 'flowa.speechModel'
 } as const
 
 export interface Prefs {
@@ -26,6 +31,8 @@ export interface Prefs {
   [PrefKey.firstRunComplete]: boolean
   [PrefKey.maxDurationMinutes]: number
   [PrefKey.shortcut]: string
+  [PrefKey.hardware]: HardwarePref
+  [PrefKey.speechModel]: SpeechModelId
 }
 
 /** Recommended hard limit for stability (minutes). Used as the default. */
@@ -39,7 +46,9 @@ export function defaultPrefs(platform: NodeJS.Platform | string): Prefs {
     [PrefKey.onboardingComplete]: false,
     [PrefKey.firstRunComplete]: false,
     [PrefKey.maxDurationMinutes]: recommendedMaxDurationMinutes,
-    [PrefKey.shortcut]: defaultShortcut(platform)
+    [PrefKey.shortcut]: defaultShortcut(platform),
+    [PrefKey.hardware]: 'gpu',
+    [PrefKey.speechModel]: whisperTurboId
   }
 }
 
@@ -92,6 +101,10 @@ export function coercePrefs(raw: unknown, platform: NodeJS.Platform | string): P
   const str = (k: keyof Prefs, fb: string): string => (typeof r[k] === 'string' ? (r[k] as string) : fb)
   const bool = (k: keyof Prefs, fb: boolean): boolean => (typeof r[k] === 'boolean' ? (r[k] as boolean) : fb)
   const hasOtherPrefs = Object.keys(r).some((k) => k !== PrefKey.shortcut)
+  const hardwareRaw = r[PrefKey.hardware]
+  const modelRaw = r[PrefKey.speechModel]
+  const hardware: HardwarePref = isHardwarePref(hardwareRaw) ? hardwareRaw : d[PrefKey.hardware]
+  const speechModel: SpeechModelId = isSpeechModelId(modelRaw) ? modelRaw : d[PrefKey.speechModel]
   return {
     [PrefKey.language]: str(PrefKey.language, d[PrefKey.language]),
     [PrefKey.microphone]: str(PrefKey.microphone, d[PrefKey.microphone]),
@@ -99,6 +112,8 @@ export function coercePrefs(raw: unknown, platform: NodeJS.Platform | string): P
     [PrefKey.onboardingComplete]: bool(PrefKey.onboardingComplete, d[PrefKey.onboardingComplete]),
     [PrefKey.firstRunComplete]: bool(PrefKey.firstRunComplete, d[PrefKey.firstRunComplete]),
     [PrefKey.maxDurationMinutes]: readMaxDurationMinutes(r[PrefKey.maxDurationMinutes]),
-    [PrefKey.shortcut]: migratedShortcut(r[PrefKey.shortcut], hasOtherPrefs, platform)
+    [PrefKey.shortcut]: migratedShortcut(r[PrefKey.shortcut], hasOtherPrefs, platform),
+    [PrefKey.hardware]: hardware,
+    [PrefKey.speechModel]: speechModel
   }
 }

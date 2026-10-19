@@ -1,12 +1,14 @@
 // Port of Flowa/Sections/HomeView.swift — settings + recent dictations.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AudioWaveform, ChevronDown, ChevronRight, CircleX, Command, Globe, Info, Mic, Power, RefreshCw, Search, Timer } from 'lucide-react'
+import { AudioWaveform, ChevronDown, ChevronRight, CircleX, Command, Cpu, Globe, Info, Layers, Mic, Power, RefreshCw, Search, Timer } from 'lucide-react'
 import type { AppState } from '@shared/types'
 import { languageDisplayName } from '@shared/languages'
 import { inputsForPicker, type AudioInputDevice } from '@shared/micDeviceKind'
 import { filterRecent } from '@shared/recent'
 import { recentMeta } from '@shared/status'
 import { maxDurationMinutesFromField, recommendedMaxDurationMinutes } from '@shared/prefs'
+import { formatBytes } from '@shared/status'
+import { hardwareChoices, hardwareHint, parakeetModelId, speechModelChoices, speechModelHint } from '@shared/speech'
 import { shortcutLimitNote } from '@shared/shortcut'
 import { ConflictBanner, ErrorBanner, PermissionBanner, StatusBanner, UpdateBanner } from '../components/Banners'
 import { DarkModeToggle, LanguagePicker, RecentRow, StatusPill } from '../components/HomeChrome'
@@ -143,6 +145,21 @@ export function HomeView({ state: s }: { state: AppState }) {
 
           <UpdateBanner state={s.update} onOpen={() => void f.action('openUpdate')} onDismiss={() => void f.action('dismissUpdateNote')} />
 
+          {s.engineNotices.map((n) => (
+            <StatusBanner
+              key={n.kind}
+              severity="warning"
+              detail={n.message}
+              actionTitle={n.kind === 'missing-model' && s.transcriber.kind !== 'downloading' ? 'Download' : undefined}
+              action={n.kind === 'missing-model' ? () => void f.action('downloadSpeechModel') : undefined}
+            />
+          ))}
+          {p['flowa.speechModel'] === parakeetModelId && s.transcriber.kind === 'downloading' && (
+            <div style={{ fontSize: 12, color: 'var(--warning)' }}>
+              Downloading Parakeet 0.6B… {formatBytes(s.transcriber.received)} / {formatBytes(s.transcriber.total)}
+            </div>
+          )}
+
           {/* Settings card */}
           <div className="card" style={{ padding: '0 16px', position: 'relative' }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '8px 0' }}>
@@ -172,6 +189,30 @@ export function HomeView({ state: s }: { state: AppState }) {
                 }}
               />
             )}
+            <div className="hairline" />
+            <Row icon={Layers} label="Speech model">
+              <QuietSelect
+                ariaLabel="Speech model"
+                value={p['flowa.speechModel']}
+                options={speechModelChoices}
+                onChange={(id) => void f.setPref('flowa.speechModel', id)}
+              />
+            </Row>
+            <div style={{ fontSize: 10, lineHeight: 1.4, color: 'var(--text-tertiary)', padding: '0 0 10px 28px' }}>
+              {speechModelHint(p['flowa.speechModel'])}
+            </div>
+            <div className="hairline" />
+            <Row icon={Cpu} label="Hardware">
+              <QuietSelect
+                ariaLabel="Hardware"
+                value={p['flowa.hardware']}
+                options={hardwareChoices}
+                onChange={(id) => void f.setPref('flowa.hardware', id)}
+              />
+            </Row>
+            <div style={{ fontSize: 10, lineHeight: 1.4, color: 'var(--text-tertiary)', padding: '0 0 10px 28px' }}>
+              {hardwareHint(s.platform)}
+            </div>
             <div className="hairline" />
             <Row icon={Mic} label="Microphone">
               <button onClick={() => void openMicMenu()} style={{ display: 'flex', alignItems: 'center', gap: 4, maxWidth: 300 }}>
@@ -274,6 +315,29 @@ export function HomeView({ state: s }: { state: AppState }) {
       </div>
       {ackOpen && <AcknowledgementsView onClose={() => setAckOpen(false)} />}
     </div>
+  )
+}
+
+function QuietSelect<T extends string>(props: {
+  ariaLabel: string
+  value: T
+  options: ReadonlyArray<{ id: T; label: string }>
+  onChange: (id: T) => void
+}) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+      <select
+        aria-label={props.ariaLabel}
+        className="quiet-select"
+        value={props.value}
+        onChange={(e) => props.onChange(e.target.value as T)}
+      >
+        {props.options.map((o) => (
+          <option key={o.id} value={o.id}>{o.label}</option>
+        ))}
+      </select>
+      <ChevronDown size={10} strokeWidth={3} color="var(--text-tertiary)" style={{ marginLeft: -12, pointerEvents: 'none' }} />
+    </span>
   )
 }
 

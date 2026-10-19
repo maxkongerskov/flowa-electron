@@ -5,6 +5,7 @@
 import type { Dictation } from './recent'
 import type { Prefs } from './prefs'
 import type { UpdateState } from './updates'
+import type { EngineNotice } from './speech'
 
 export type { UpdateState }
 
@@ -17,6 +18,8 @@ export type TranscriberStatus =
   | { kind: 'ready' }
   | { kind: 'transcribing' }
   | { kind: 'error'; message: string }
+  /** Weights or the Parakeet runtime are absent. Home stays open; the yellow note explains it. */
+  | { kind: 'unavailable'; message: string }
 
 export type AppleFnBehavior = 0 | 1 | 2 | 3
 
@@ -78,6 +81,8 @@ export interface AppState {
   launchAtLogin: boolean
   shortcut: ShortcutState
   engine: EngineInfo
+  /** Quiet in-app notes: GPU→CPU fallback, missing Parakeet files, language coverage. */
+  engineNotices: EngineNotice[]
   /** GitHub release check. Idle unless a newer version, or a manual check, has something to say. */
   update: UpdateState
 }

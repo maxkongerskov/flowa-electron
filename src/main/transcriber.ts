@@ -5,6 +5,13 @@
 // Here : whisper.cpp `whisper-server` (pinned tag, see shared/model.ts) kept resident
 //        on 127.0.0.1 with ggml-large-v3-turbo.bin (same checkpoint, float16).
 //        `whisper-cli` is used one-shot if the server binary is missing.
+//        GPU: omit `-ng` and launch the Metal / CUDA / Vulkan binary selected in
+//        shared/speech.ts. CPU passes `-ng`. If the chosen GPU backend cannot
+//        start, we retry on CPU and set `notice` (yellow in-app note, no dialog).
+//
+// Parakeet 0.6B (NVIDIA Parakeet TDT 0.6B v3) runs through sherpa-onnx-offline
+// when that model is selected. Missing weights or a missing binary set status
+// `unavailable` plus the same yellow note — they do not throw.
 //
 // Status machine is the same as Swift (idle → preparing(progress) → ready ⇄
 // transcribing, or error) plus `downloading` for the first-run model fetch,
@@ -20,10 +27,22 @@ import path from 'node:path'
 import { createServer } from 'node:net'
 import type { TranscriberStatus } from '@shared/types'
 import { cleanTranscript, cliArgs, ggmlModel, inferenceFields, serverArgs, swiftModelVariant } from '@shared/model'
+import { PrefKey } from '@shared/prefs'
+import {
+  gpuFallbackNote, missingRuntimeNote, missingWeightsNote, parakeetCliArgs, parakeetDirName, parakeetGpuBackends,
+  parakeetModelId, parakeetWeights, parseSherpaTranscript, selectBackend, sherpaGpuFailed, speechModelById,
+  whisperGpuBackends, whisperLogsShowGpuFailure, type BackendPlan, type EngineNotice, type ParakeetProvider, type SpeechModelId
+} from '@shared/speech'
 import { expectedPrepareSeconds, friendlyLoadError, isReady, machineNoun, needsSetup } from '@shared/status'
 import { encodeWav16 } from '@shared/wav'
+import { probeGpu } from './gpuProbe'
 import { paths } from './paths'
+import { prefs } from './store'
 import { run } from './proc'
+import {
+  findSherpaBinary, parakeetDirCandidates, parakeetPaths, readParakeetProviders, readWhisperManifest, resolveParakeetDir,
+  resolveWhisperBin, sherpaProcessEnv, sherpaSearchDirs
+} from './speechFiles'
 
 const exe = (name: string): string => (process.platform === 'win32' ? `${name}.exe` : name)
 const noun = machineNoun(process.platform)
@@ -95,18 +114,32 @@ const threads = (): number => Math.max(1, Math.min(8, (os.availableParallelism?.
 
 export class Transcriber extends EventEmitter {
   status: TranscriberStatus = { kind: 'idle' }
-  readonly modelName = swiftModelVariant
+  /** Yellow in-app note: GPU fallback, or Parakeet weights/runtime missing. */
+  notice: EngineNotice | null = null
   lastDecodeErrorMessage: string | null = null
 
   private isLoaded = false
   private loadPromise: Promise<void> | null = null
+  private downloadPromise: Promise<void> | null = null
+  private downloadAbort: AbortController | null = null
+  private loadGen = 0
+  private loadedKey = ''
   private prepareTimer: NodeJS.Timeout | null = null
   private server: ChildProcess | null = null
   private port = 0
   private serverLog: string[] = []
   private verifyOnNextLoad = false
   private modelPath: string | null = null
-  private mode: 'server' | 'cli' | null = null
+  private mode: 'server' | 'cli' | 'parakeet' | null = null
+  private activeModelId: SpeechModelId = 'whisper-turbo'
+  private runtime: BackendPlan | null = null
+  private parakeetBin: string | null = null
+  private parakeetDir: string | null = null
+  private whisperUseGpu = true
+
+  get modelName(): string {
+    return this.activeModelId === parakeetModelId ? 'nvidia/parakeet-tdt-0.6b-v3' : swiftModelVariant
+  }
 
   get isReady(): boolean {
     return isReady(this.status, this.isLoaded)
@@ -117,13 +150,46 @@ export class Transcriber extends EventEmitter {
   }
 
   get engineInfo(): { modelFile: string | null; binary: string | null; detail: string } {
+    const label = speechModelById(this.activeModelId).label
+    const backend = this.runtime ? ` · ${this.runtime.backend === 'metal' && this.activeModelId === parakeetModelId ? 'Apple Metal (CoreML)' : this.runtime.backend}` : ''
+    if (this.activeModelId === parakeetModelId) {
+      return {
+        modelFile: this.parakeetDir,
+        binary: this.parakeetBin,
+        detail: `${label}${backend} · sherpa-onnx`
+      }
+    }
     const bin = resolveBinary('whisper-server') ?? resolveBinary('whisper-cli')
     const model = this.modelPath ?? resolveModel()
     return {
       modelFile: model,
       binary: bin,
-      detail: `whisper.cpp · ${ggmlModel.fileName} (= ${swiftModelVariant})`
+      detail: `${label}${backend} · whisper.cpp ${ggmlModel.fileName}`
     }
+  }
+
+  private configKey(): string {
+    return `${prefs.get(PrefKey.speechModel)}|${prefs.get(PrefKey.hardware)}`
+  }
+
+  /** Reload when the speech model or hardware preference changes. */
+  reloadForPrefs(): void {
+    const key = this.configKey()
+    if (this.loadedKey === key && (this.isLoaded || this.status.kind === 'unavailable')) return
+    this.resetForReinstall()
+    // A model/hardware switch should not re-hash the Whisper file.
+    this.verifyOnNextLoad = false
+    void this.loadIfNeeded()
+  }
+
+  /** In-app fetch of the Parakeet ONNX weights into app data. No dialog. */
+  downloadSelectedModel(): Promise<void> {
+    if (prefs.get(PrefKey.speechModel) !== parakeetModelId) return Promise.resolve()
+    if (this.downloadPromise) return this.downloadPromise
+    this.downloadPromise = this.downloadParakeet().finally(() => {
+      this.downloadPromise = null
+    })
+    return this.downloadPromise
   }
 
   private setStatus(s: TranscriberStatus): void {
@@ -132,7 +198,7 @@ export class Transcriber extends EventEmitter {
   }
 
   async loadIfNeeded(): Promise<void> {
-    if (this.isLoaded && (this.mode === 'cli' || this.server)) {
+    if (this.isLoaded && (this.mode === 'cli' || this.mode === 'parakeet' || this.server)) {
       if (this.status.kind !== 'ready' && this.status.kind !== 'transcribing') this.setStatus({ kind: 'ready' })
       return
     }
@@ -145,9 +211,15 @@ export class Transcriber extends EventEmitter {
 
   /** Drop the loaded engine so the next load re-prepares (Swift: resetForReinstall). */
   resetForReinstall(): void {
+    this.loadGen += 1
+    this.downloadAbort?.abort()
+    this.downloadAbort = null
     this.stopPrepareProgress()
     this.killServer()
     this.isLoaded = false
+    this.loadedKey = ''
+    this.notice = null
+    this.runtime = null
     this.lastDecodeErrorMessage = null
     this.verifyOnNextLoad = true
     this.setStatus({ kind: 'idle' })
@@ -167,10 +239,82 @@ export class Transcriber extends EventEmitter {
   private async performLoad(): Promise<void> {
     this.killServer()
     this.isLoaded = false
+    this.notice = null
+    const modelId = prefs.get(PrefKey.speechModel)
+    const hardware = prefs.get(PrefKey.hardware)
+    this.activeModelId = modelId
     const started = Date.now()
     try {
-      const serverBin = resolveBinary('whisper-server')
-      const cliBin = resolveBinary('whisper-cli')
+      if (modelId === parakeetModelId) {
+        await this.performLoadParakeet()
+        this.loadedKey = `${modelId}|${hardware}`
+        return
+      }
+      await this.performLoadWhisper(started)
+      this.loadedKey = `${modelId}|${hardware}`
+    } catch (e) {
+      this.stopPrepareProgress()
+      this.killServer()
+      this.isLoaded = false
+      this.loadedKey = `${modelId}|${hardware}`
+      const msg = e instanceof Error ? e.message : String(e)
+      console.error('[Flowa] speech engine FAILED:', msg, this.serverLog.slice(-5).join(' | '))
+      this.setStatus({ kind: 'error', message: friendlyLoadError(msg, noun) })
+    }
+  }
+
+  private planForActiveModel(): BackendPlan {
+    const modelId = this.activeModelId
+    const label = speechModelById(modelId).label
+    const builds = readWhisperManifest(paths.binDir, process.platform)
+    const gpu =
+      modelId === parakeetModelId
+        ? parakeetGpuBackends(readParakeetProviders(paths.binDir))
+        : whisperGpuBackends(builds)
+    return selectBackend(prefs.get(PrefKey.hardware), process.platform, probeGpu(), gpu, builds, label)
+  }
+
+  private async performLoadParakeet(): Promise<void> {
+    const label = speechModelById(parakeetModelId).label
+    const dir = resolveParakeetDir(parakeetDirCandidates(paths.bundledModels, paths.downloadedModels))
+    const packaged = app.isPackaged
+    if (!dir) {
+      const dest = path.join(paths.downloadedModels, parakeetDirName)
+      this.notice = { kind: 'missing-model', message: missingWeightsNote(label, dest, packaged) }
+      this.runtime = null
+      this.parakeetDir = null
+      this.parakeetBin = null
+      this.mode = null
+      this.setStatus({ kind: 'unavailable', message: this.notice.message })
+      return
+    }
+    const plan = this.planForActiveModel()
+    this.runtime = plan
+    const bin = findSherpaBinary(sherpaSearchDirs(paths.binDir, plan.parakeetProvider))
+    if (!bin) {
+      this.notice = { kind: 'missing-runtime', message: missingRuntimeNote(label, packaged) }
+      this.parakeetDir = dir
+      this.parakeetBin = null
+      this.mode = null
+      this.setStatus({ kind: 'unavailable', message: this.notice.message })
+      return
+    }
+    this.parakeetDir = dir
+    this.parakeetBin = bin
+    this.mode = 'parakeet'
+    if (plan.fellBack && plan.note) this.notice = { kind: 'gpu-fallback', message: plan.note }
+    this.isLoaded = true
+    this.setStatus({ kind: 'ready' })
+    console.log(`[Flowa] Parakeet ready (${plan.parakeetProvider}) from ${dir}`)
+  }
+
+  private async performLoadWhisper(started: number): Promise<void> {
+    const plan = this.planForActiveModel()
+    this.runtime = plan
+    this.whisperUseGpu = plan.whisperUseGpu
+    if (plan.fellBack && plan.note) this.notice = { kind: 'gpu-fallback', message: plan.note }
+    const serverBin = resolveWhisperBin(paths.binDir, plan.whisperBinary, 'server') ?? resolveBinary('whisper-server')
+      const cliBin = resolveWhisperBin(paths.binDir, plan.whisperBinary, 'cli') ?? resolveBinary('whisper-cli')
       if (!serverBin && !cliBin) {
         throw new Error(
           app.isPackaged
@@ -197,26 +341,154 @@ export class Transcriber extends EventEmitter {
 
       this.startPrepareProgress()
       if (serverBin) {
-        await this.startServer(serverBin, model)
+        try {
+          await this.startServer(serverBin, model, plan.whisperUseGpu)
+        } catch (e) {
+          if (!plan.whisperUseGpu) throw e
+          console.warn('[Flowa] GPU engine failed, retrying on CPU', e)
+          this.noteGpuFallback(plan.backend === 'cpu' ? 'gpu' : plan.backend)
+          this.killServer()
+          this.whisperUseGpu = false
+          const cpuBin = resolveWhisperBin(paths.binDir, 'default', 'server') ?? serverBin
+          await this.startServer(cpuBin, model, false)
+        }
         this.mode = 'server'
+        if (plan.whisperUseGpu && this.runtime && this.runtime.backend !== 'cpu' && whisperLogsShowGpuFailure(this.serverLog.join('\n'), this.runtime.backend)) {
+          this.noteGpuFallback(this.runtime.backend)
+        }
         // Prewarm (Swift: WhisperKitConfig(prewarm: true)): one tiny inference
         // so the first real dictation doesn't pay for GPU/Metal warm-up.
         await this.inferServer(encodeWav16(new Float32Array(16_000)), 'en')
-      } else {
+      } else if (cliBin) {
         this.mode = 'cli'
+      } else {
+        throw new Error(
+          app.isPackaged
+            ? 'Speech engine is missing from this app. Reinstall Flowa from the original package.'
+            : 'Speech engine is missing (whisper.cpp not built). Run `npm run setup:whisper`.'
+        )
       }
       this.stopPrepareProgress()
       this.isLoaded = true
       this.setStatus({ kind: 'ready' })
-      console.log(`[Flowa] Whisper ready in ${Math.round((Date.now() - started) / 1000)}s (${this.mode}) from ${model}`)
-    } catch (e) {
-      this.stopPrepareProgress()
-      this.killServer()
-      this.isLoaded = false
-      const msg = e instanceof Error ? e.message : String(e)
-      console.error('[Flowa] Whisper FAILED:', msg, this.serverLog.slice(-5).join(' | '))
-      this.setStatus({ kind: 'error', message: friendlyLoadError(msg, noun) })
+    console.log(`[Flowa] Whisper ready in ${Math.round((Date.now() - started) / 1000)}s (${this.mode}, gpu=${this.whisperUseGpu}) from ${model}`)
+  }
+
+  private noteGpuFallback(requested: 'gpu' | 'metal' | 'cuda' | 'vulkan'): void {
+    const message = gpuFallbackNote(speechModelById(this.activeModelId).label, requested)
+    this.notice = { kind: 'gpu-fallback', message }
+    if (this.runtime) {
+      this.runtime = { ...this.runtime, backend: 'cpu', whisperUseGpu: false, parakeetProvider: 'cpu', fellBack: true, note: message }
     }
+    this.whisperUseGpu = false
+    this.emit('change')
+  }
+
+  private async inferParakeet(wavFile: string): Promise<string> {
+    if (!this.parakeetBin || !this.parakeetDir || !this.runtime) throw new Error("Speech engine isn't ready yet.")
+    const files = parakeetPaths(this.parakeetDir)
+    const runOnce = async (provider: ParakeetProvider, bin: string): Promise<{ code: number; output: string; text: string }> => {
+      const r = await run(bin, parakeetCliArgs(files, wavFile, provider, threads()), {
+        timeoutMs: 10 * 60 * 1000,
+        cwd: path.dirname(bin),
+        env: sherpaProcessEnv(bin)
+      })
+      const output = `${r.stdout}\n${r.stderr}`
+      return { code: r.code, output, text: r.code === 0 ? parseSherpaTranscript(output) : '' }
+    }
+    const provider = this.runtime.parakeetProvider
+    let result = await runOnce(provider, this.parakeetBin)
+    if (result.code !== 0 && sherpaGpuFailed(result.output, provider)) {
+      console.warn('[Flowa] Parakeet GPU provider failed, retrying on CPU')
+      this.noteGpuFallback(this.runtime.backend === 'cpu' ? 'gpu' : this.runtime.backend)
+      const cpuBin = findSherpaBinary(sherpaSearchDirs(paths.binDir, 'cpu')) ?? this.parakeetBin
+      this.parakeetBin = cpuBin
+      result = await runOnce('cpu', cpuBin)
+    }
+    if (result.code !== 0) throw new Error((result.output.trim() || 'Parakeet failed').slice(-280))
+    return result.text
+  }
+
+  private async downloadParakeet(): Promise<void> {
+    const gen = this.loadGen
+    const label = speechModelById(parakeetModelId).label
+    const dir = path.join(paths.downloadedModels, parakeetDirName)
+    fs.mkdirSync(dir, { recursive: true })
+    const abort = new AbortController()
+    this.downloadAbort = abort
+    const total = parakeetWeights.reduce((sum, w) => sum + w.approxBytes, 0)
+    let receivedBase = 0
+    try {
+      for (const weight of parakeetWeights) {
+        if (gen !== this.loadGen || abort.signal.aborted) return
+        const dest = path.join(dir, weight.name)
+        let size = 0
+        try {
+          size = fs.statSync(dest).size
+        } catch {
+          size = 0
+        }
+        if (size >= weight.minBytes) {
+          receivedBase += weight.approxBytes
+          continue
+        }
+        await this.downloadFile(weight.url, dest, weight.minBytes, receivedBase, total, abort.signal)
+        receivedBase += weight.approxBytes
+      }
+      if (gen !== this.loadGen || abort.signal.aborted) return
+      this.loadedKey = ''
+      await this.loadIfNeeded()
+    } catch (e) {
+      if (gen !== this.loadGen || abort.signal.aborted) return
+      const msg = e instanceof Error ? e.message : String(e)
+      this.notice = { kind: 'missing-model', message: `${missingWeightsNote(label, dir, app.isPackaged)} ${friendlyLoadError(msg, noun)}` }
+      this.loadedKey = this.configKey()
+      this.setStatus({ kind: 'unavailable', message: this.notice.message })
+    } finally {
+      if (this.downloadAbort === abort) this.downloadAbort = null
+    }
+  }
+
+  private async downloadFile(url: string, dest: string, minBytes: number, receivedBase: number, total: number, signal: AbortSignal): Promise<void> {
+    const partial = `${dest}.partial`
+    fs.mkdirSync(path.dirname(dest), { recursive: true })
+    let have = 0
+    try {
+      have = fs.statSync(partial).size
+    } catch {
+      have = 0
+    }
+    const headers: Record<string, string> = have > 0 ? { Range: `bytes=${have}-` } : {}
+    const res = await net.fetch(url, { headers, signal })
+    if (!res.ok || !res.body) throw new Error(`download failed: HTTP ${res.status}`)
+    if (res.status !== 206) have = 0
+    const out = fs.createWriteStream(partial, { flags: have > 0 ? 'a' : 'w' })
+    let received = have
+    let lastEmit = 0
+    this.setStatus({ kind: 'downloading', received: receivedBase + received, total })
+    const reader = res.body.getReader()
+    try {
+      for (;;) {
+        if (signal.aborted) throw new Error('download aborted')
+        const { done, value } = await reader.read()
+        if (done) break
+        received += value.byteLength
+        if (!out.write(value)) await new Promise<void>((r) => out.once('drain', () => r()))
+        const now = Date.now()
+        if (now - lastEmit > 250) {
+          lastEmit = now
+          this.setStatus({ kind: 'downloading', received: receivedBase + received, total })
+        }
+      }
+    } finally {
+      await new Promise<void>((r) => out.end(() => r()))
+    }
+    const size = fs.statSync(partial).size
+    if (size < minBytes) {
+      fs.rmSync(partial, { force: true })
+      throw new Error(`download failed: file too small (${size} bytes)`)
+    }
+    fs.renameSync(partial, dest)
   }
 
   private async downloadModel(): Promise<string> {
@@ -265,10 +537,10 @@ export class Transcriber extends EventEmitter {
     return dest
   }
 
-  private async startServer(bin: string, model: string): Promise<void> {
+  private async startServer(bin: string, model: string, useGpu: boolean): Promise<void> {
     this.port = await freePort()
     this.serverLog = []
-    const child = spawn(bin, serverArgs(model, this.port, threads()), {
+    const child = spawn(bin, serverArgs(model, this.port, threads(), useGpu), {
       windowsHide: true,
       cwd: path.dirname(bin)
     })
@@ -327,10 +599,11 @@ export class Transcriber extends EventEmitter {
   }
 
   private async inferCli(wavFile: string, language: string | null): Promise<string> {
-    const bin = resolveBinary('whisper-cli')
+    const kind = this.runtime?.whisperBinary ?? 'default'
+    const bin = resolveWhisperBin(paths.binDir, this.whisperUseGpu ? kind : 'default', 'cli') ?? resolveBinary('whisper-cli')
     if (!bin || !this.modelPath) throw new Error('Speech engine isn\'t ready yet.')
     const outBase = path.join(os.tmpdir(), `flowa-whisper-${process.pid}-${Date.now()}`)
-    const r = await run(bin, cliArgs(this.modelPath, wavFile, outBase, language, threads()), 10 * 60 * 1000)
+    const r = await run(bin, cliArgs(this.modelPath, wavFile, outBase, language, threads(), this.whisperUseGpu), 10 * 60 * 1000)
     const txt = `${outBase}.txt`
     let text = ''
     try {
@@ -349,15 +622,18 @@ export class Transcriber extends EventEmitter {
     this.lastDecodeErrorMessage = null
     await this.loadIfNeeded()
     if (!this.isLoaded) {
-      this.lastDecodeErrorMessage = this.status.kind === 'error' ? this.status.message : "Speech engine isn't ready yet."
+      this.lastDecodeErrorMessage =
+        this.status.kind === 'error' || this.status.kind === 'unavailable' ? this.status.message : "Speech engine isn't ready yet."
       return null
     }
     this.setStatus({ kind: 'transcribing' })
     try {
       const text =
-        this.mode === 'server'
-          ? await this.inferServer(fs.readFileSync(wavFile), language)
-          : await this.inferCli(wavFile, language)
+        this.mode === 'parakeet'
+          ? await this.inferParakeet(wavFile)
+          : this.mode === 'server'
+            ? await this.inferServer(fs.readFileSync(wavFile), language)
+            : await this.inferCli(wavFile, language)
       this.setStatus({ kind: 'ready' })
       return text ? text : null
     } catch (e) {

@@ -58,8 +58,8 @@ export function inferenceFields(language: string | null): Record<string, string>
 }
 
 /** Command-line args for whisper-server (model stays resident like a loaded WhisperKit pipe). */
-export function serverArgs(modelPath: string, port: number, threads: number): string[] {
-  return [
+export function serverArgs(modelPath: string, port: number, threads: number, useGpu = true): string[] {
+  const args = [
     '-m', modelPath,
     '--host', '127.0.0.1',
     '--port', String(port),
@@ -73,11 +73,15 @@ export function serverArgs(modelPath: string, port: number, threads: number): st
     '-nth', String(decoding.noSpeechThreshold),
     '-l', 'auto'
   ]
+  // -ng turns off whichever GPU backend this binary was built with
+  // (Metal on macOS, CUDA or Vulkan when those were compiled in).
+  if (!useGpu) args.push('-ng')
+  return args
 }
 
 /** Command-line args for the one-shot whisper-cli fallback. */
-export function cliArgs(modelPath: string, wavPath: string, outBase: string, language: string | null, threads: number): string[] {
-  return [
+export function cliArgs(modelPath: string, wavPath: string, outBase: string, language: string | null, threads: number, useGpu = true): string[] {
+  const args = [
     '-m', modelPath,
     '-f', wavPath,
     '-l', language ?? 'auto',
@@ -93,6 +97,8 @@ export function cliArgs(modelPath: string, wavPath: string, outBase: string, lan
     '-otxt',
     '-of', outBase
   ]
+  if (!useGpu) args.push('-ng')
+  return args
 }
 
 /** Clean whisper.cpp text output the way WhisperKit's joined result reads. */

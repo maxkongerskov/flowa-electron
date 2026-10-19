@@ -163,6 +163,11 @@ export class DictationPipeline extends EventEmitter {
       const started = Date.now()
       const text = await this.transcriber.transcribe(wavPath, language)
       if (!text) {
+        if (this.transcriber.status.kind === 'unavailable') {
+          this.emit('showMainWindow')
+          console.log('[Flowa] transcription skipped — speech model unavailable')
+          return
+        }
         if (this.transcriber.lastDecodeErrorMessage) this.lastErrorMessage = this.transcriber.lastDecodeErrorMessage
         else if (this.transcriber.status.kind === 'error') this.lastErrorMessage = this.transcriber.status.message
         else this.lastErrorMessage = "Couldn't understand that audio. Try speaking more clearly or check the microphone."

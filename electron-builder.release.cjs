@@ -3,6 +3,9 @@
 // <resources>/models/ggml-large-v3-turbo.bin before <appData>/Flowa-Electron/models/
 // (src/main/transcriber.ts → modelCandidates), so no first-run download is needed.
 // Stage the model first: models/ggml-large-v3-turbo.bin (gitignored).
+// Parakeet is optional and bundled the same way when models/parakeet-tdt-0.6b-v3/
+// is staged (`npm run setup:parakeet`). sherpa-onnx binaries live under
+// resources/bin/<platform>-<arch>/sherpa/ and are copied with the rest of bin/.
 const fs = require('node:fs')
 const path = require('node:path')
 const yaml = require('js-yaml')
@@ -16,10 +19,14 @@ const engine = (dir) => [{ from: `resources/bin/${dir}-\${arch}`, to: 'bin' }]
 // The macOS helper (resources/mac) only goes into the mac apps.
 const common = base.extraResources.filter((r) => !String(r.from).startsWith('resources/bin/') && r.from !== 'resources/mac')
 
+const modelFilter = ['ggml-large-v3-turbo.bin']
+const parakeetEncoder = path.join(__dirname, 'models', 'parakeet-tdt-0.6b-v3', 'encoder.int8.onnx')
+if (fs.existsSync(parakeetEncoder)) modelFilter.push('parakeet-tdt-0.6b-v3/**')
+
 module.exports = {
   ...base,
-  // Outside app.asar: whisper-server opens the file by path.
-  extraResources: [...common, { from: 'models', to: 'models', filter: ['ggml-large-v3-turbo.bin'] }],
+  // Outside app.asar: whisper-server and sherpa-onnx open weights by path.
+  extraResources: [...common, { from: 'models', to: 'models', filter: modelFilter }],
   mac: { ...base.mac, extraResources: [...(base.mac.extraResources || []), ...engine('darwin'), { from: 'resources/mac', to: 'mac' }] },
   win: { ...base.win, extraResources: [...(base.win.extraResources || []), ...engine('win32')] },
   linux: { ...base.linux, extraResources: engine('linux') },
