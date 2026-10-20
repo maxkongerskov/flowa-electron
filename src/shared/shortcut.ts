@@ -36,8 +36,7 @@ const MODIFIER_ONLY = new Set([
 const SINGLE_KEYS = new Set<string>([
   ...Array.from({ length: 24 }, (_, i) => `F${i + 1}`),
   'MediaPlayPause', 'MediaNextTrack', 'MediaPreviousTrack', 'MediaStop',
-  'VolumeUp', 'VolumeDown', 'VolumeMute',
-  'PrintScreen', 'Scrolllock', 'Numlock'
+  'VolumeUp', 'VolumeDown', 'VolumeMute'
 ])
 
 const CHORD_KEYS = new Set<string>([
@@ -311,7 +310,10 @@ export function modifierWatchStep(
   if (names.length === 0) return { state, fire: false }
   const trimmed = line.trim()
   if (!trimmed || trimmed === 'ready' || trimmed === 'denied') return { state, fire: false }
-  if (trimmed === 'key') {
+  if (trimmed === 'reset' || trimmed === 'denied') return { state: initialModWatch(), fire: false }
+  // "key" is another keyboard key. "pointer" is a mouse button or scroll.
+  // Either one means the modifier was not tapped by itself.
+  if (trimmed === 'key' || trimmed === 'pointer') {
     if (!state.armed) return { state, fire: false }
     return { state: { ...state, chord: true }, fire: false }
   }

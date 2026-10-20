@@ -1,0 +1,20 @@
+# Optional. No secrets. Run it by hand from the Actions tab.
+# It builds two slim NSIS installers (no Whisper weights), serves the newer
+# one on localhost, and checks that version 9.9.0 installs 9.9.1.
+# Release builds are still produced on the Mac with scripts/release.sh.
+name: Windows update rehearsal
+
+on:
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node scripts/e2e-update.mjs

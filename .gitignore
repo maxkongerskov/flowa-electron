@@ -22,6 +22,7 @@ resources/mac/flowa-helper
 # Local env
 .env
 .env.*
+update-private.pem
 
 # TypeScript incremental + helper intermediates
 *.tsbuildinfo

@@ -47,6 +47,10 @@ describe('speech model ids', () => {
     expect(script).toContain(ggmlSmall.sha1)
     expect(script).toContain(ggmlSmall.fileName)
     expect(script).toContain(ggmlModel.fileName)
+    const hashed = script.indexOf('await sha1(partial)')
+    const renamed = script.indexOf('fs.renameSync(partial, dest)')
+    expect(hashed).toBeGreaterThan(0)
+    expect(hashed).toBeLessThan(renamed)
   })
 })
 

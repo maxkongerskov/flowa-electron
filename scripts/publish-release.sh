@@ -1,15 +1,22 @@
 #!/bin/bash
-# Upload release/ to GitHub Releases as a published Latest release (not a draft,
-# not a prerelease). The channel yml files must already match the artifacts;
-# this script checks that before uploading.
+# Upload release/ to GitHub Releases.
+# The release stays a draft until every file has been uploaded and the feed
+# still matches. Only files that exist are uploaded (a missing
+# latest-linux-arm64.yml is skipped). Each upload is retried on its own so a
+# 408 on a large dmg does not abort the whole set.
+# An already-published release is left alone unless FLOWA_PUBLISH_FORCE=1.
+#
 #   bash scripts/publish-release.sh
-#   bash scripts/publish-release.sh release 1.2.1
+#   bash scripts/publish-release.sh release 1.2.2
 # gh must be logged in with access to maxkongerskov/flowa-electron.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 OUT="${1:-release}"
 VERSION="${2:-$(node -p "require('./package.json').version")}"
+if [ -z "${FLOWA_UPDATE_KEY:-}" ] && [ -f "${HOME}/.config/flowa/update-private.pem" ]; then
+  export FLOWA_UPDATE_KEY="${HOME}/.config/flowa/update-private.pem"
+fi
 REPO="maxkongerskov/flowa-electron"
 TAG="v${VERSION}"
 
@@ -17,30 +24,69 @@ TAG="v${VERSION}"
 node scripts/update-feed.mjs --verify "$OUT" "$VERSION"
 
 shopt -s nullglob
-files=(
-  "$OUT"/*.dmg
-  "$OUT"/*.zip
-  "$OUT"/*.exe
-  "$OUT"/*.AppImage
-  "$OUT"/*.deb
-  "$OUT"/latest-mac.yml
-  "$OUT"/latest.yml
-  "$OUT"/latest-linux.yml
-  "$OUT"/latest-linux-arm64.yml
-  "$OUT"/*.blockmap
-)
+files=()
+for pattern in '*.dmg' '*.zip' '*.exe' '*.AppImage' '*.deb' 'latest-mac.yml' 'latest.yml' 'latest-linux.yml' 'latest-linux-arm64.yml' '*.blockmap'; do
+  for f in "$OUT"/$pattern; do
+    [ -f "$f" ] || continue
+    base="$(basename "$f")"
+    case "$base" in
+      latest-*.yml|latest.yml) ;;
+      *)
+        case "$base" in
+          *"$VERSION"*) ;;
+          *) echo "Skipping $base (does not match $VERSION)" >&2; continue ;;
+        esac
+        ;;
+    esac
+    files+=("$f")
+  done
+done
 [ "${#files[@]}" -gt 0 ] || { echo "No release files in $OUT" >&2; exit 1; }
 
 NOTES="Flowa ${VERSION}
 
-The installed app can check for this release, download it, and restart into it.
+The installed app checks this release, verifies its signature, downloads it, and restarts into it.
 macOS updater zips are for electron-updater. The dmg is the file to download by hand."
 
+upload_one() {
+  local f="$1"
+  local attempt=1
+  local delay=4
+  while [ "$attempt" -le 5 ]; do
+    if gh release upload "$TAG" --repo "$REPO" --clobber "$f"; then
+      return 0
+    fi
+    echo "Upload failed (attempt ${attempt}) for $(basename "$f"). Retrying in ${delay}s." >&2
+    sleep "$delay"
+    attempt=$((attempt + 1))
+    delay=$((delay * 2))
+  done
+  echo "Giving up on $(basename "$f")" >&2
+  return 1
+}
+
 if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-  gh release upload "$TAG" --repo "$REPO" --clobber "${files[@]}"
-  gh release edit "$TAG" --repo "$REPO" --latest --title "Flowa ${VERSION}" --notes "$NOTES"
+  DRAFT="$(gh release view "$TAG" --repo "$REPO" --json isDraft --jq .isDraft)"
+  if [ "$DRAFT" != "true" ] && [ "${FLOWA_PUBLISH_FORCE:-}" != "1" ]; then
+    echo "Release $TAG is already published. Refusing to replace it. Set FLOWA_PUBLISH_FORCE=1 to override." >&2
+    exit 1
+  fi
 else
-  gh release create "$TAG" --repo "$REPO" --title "Flowa ${VERSION}" --notes "$NOTES" --latest "${files[@]}"
+  gh release create "$TAG" --repo "$REPO" --draft --title "Flowa ${VERSION}" --notes "$NOTES"
 fi
 
-echo "✓ Published ${TAG} on ${REPO} (Latest, not a draft or prerelease)"
+for f in "${files[@]}"; do
+  echo "▶ upload $(basename "$f")"
+  upload_one "$f"
+done
+
+echo "▶ verify uploaded names"
+ASSET_NAMES="$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name')"
+for f in "${files[@]}"; do
+  base="$(basename "$f")"
+  printf '%s\n' "$ASSET_NAMES" | grep -qx "$base" || { echo "Missing on the release: $base" >&2; exit 1; }
+done
+node scripts/update-feed.mjs --verify "$OUT" "$VERSION"
+
+gh release edit "$TAG" --repo "$REPO" --draft=false --latest --title "Flowa ${VERSION}" --notes "$NOTES"
+echo "✓ Published ${TAG} on ${REPO} (Latest)"

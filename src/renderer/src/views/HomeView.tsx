@@ -1,5 +1,5 @@
 // Port of Flowa/Sections/HomeView.swift — settings + recent dictations.
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AudioWaveform, ChevronDown, ChevronRight, CircleX, Command, Cpu, Globe, Info, Layers, Mic, Power, RefreshCw, Search, Timer } from 'lucide-react'
 import type { AppState } from '@shared/types'
 import { languageDisplayName } from '@shared/languages'
@@ -18,19 +18,22 @@ const f = window.flowa
 
 function useInputDevices(current: string): [AudioInputDevice[], () => Promise<AudioInputDevice[]>] {
   const [devices, setDevices] = useState<AudioInputDevice[]>([])
+  const currentRef = useRef(current)
+  currentRef.current = current
   const refresh = useCallback(async () => {
+    const selected = currentRef.current
     try {
       const list = inputsForPicker(await navigator.mediaDevices.enumerateDevices())
       setDevices(list)
       // Migrate stale prefs to system default (only when we can actually see devices).
-      if (list.length > 0 && current !== 'default' && current !== '' && !list.some((d) => d.uid === current)) {
+      if (list.length > 0 && selected !== 'default' && selected !== '' && !list.some((d) => d.uid === selected)) {
         void f.setPref('flowa.microphone', 'default')
       }
       return list
     } catch {
       return []
     }
-  }, [current])
+  }, [])
   useEffect(() => {
     void refresh()
     navigator.mediaDevices.addEventListener('devicechange', refresh)
@@ -90,6 +93,7 @@ export function HomeView({ state: s }: { state: AppState }) {
 
       <div className="scroll" style={{ flex: 1 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: '0 22px 22px' }}>
+          {s.prefsWarning && <StatusBanner severity="warning" title="Preferences were reset" detail={s.prefsWarning} />}
           {s.lastErrorMessage && <ErrorBanner message={s.lastErrorMessage} onDismiss={() => void f.action('dismissError')} />}
           {s.transcriber.kind === 'error' && (
             <StatusBanner

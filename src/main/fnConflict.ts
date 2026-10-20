@@ -12,10 +12,11 @@ import { FN_SHORTCUT, PrefKey } from '@shared/prefs'
 class FnConflictDetector extends EventEmitter {
   status: ConflictStatus = { kind: 'unknown' }
   private timer: NodeJS.Timeout | null = null
+  private checking = false
 
   start(): void {
     void this.check()
-    this.timer = setInterval(() => void this.check(), 2000)
+    this.timer = setInterval(() => void this.check(), 15_000)
   }
 
   stop(): void {
@@ -24,6 +25,16 @@ class FnConflictDetector extends EventEmitter {
   }
 
   async check(): Promise<void> {
+    if (this.checking) return
+    this.checking = true
+    try {
+      await this.checkNow()
+    } finally {
+      this.checking = false
+    }
+  }
+
+  private async checkNow(): Promise<void> {
     let next: ConflictStatus
     if (process.platform !== 'darwin' || prefs.get(PrefKey.shortcut) !== FN_SHORTCUT) {
       next = { kind: 'clean' }

@@ -18,6 +18,8 @@ import { machineNoun, maxDurationStoppedMessage, modelNotReadyMessage, silenceMe
 import { maxDurationSeconds, PrefKey } from '@shared/prefs'
 import { Transcriber } from './transcriber'
 import { paste, type TargetApp } from './textInserter'
+import { BAR_CRASH_MESSAGE } from '@shared/barCrash'
+import { continueQueue } from '@shared/queue'
 import { loadRecent, prefs, saveRecent } from './store'
 
 /**
@@ -137,11 +139,22 @@ export class DictationPipeline extends EventEmitter {
     const wavPath = path.join(os.tmpdir(), `flowa-${crypto.randomUUID().slice(0, 8)}.wav`)
     fs.writeFileSync(wavPath, encodeWav16(result.samples))
 
-    // Single-flight queue.
-    this.queue = this.queue.then(() =>
-      this.runTranscription(wavPath, target, language, result.stoppedForMaxDuration, maxMinutes)
+    // Single-flight queue. A thrown job is logged and does not poison the chain.
+    this.queue = continueQueue(
+      this.queue,
+      () => this.runTranscription(wavPath, target, language, result.stoppedForMaxDuration, maxMinutes),
+      (err) => {
+        console.error('[Flowa] transcription queue failed', err instanceof Error ? err.message : err)
+      }
     )
     await this.queue
+  }
+
+  /** The Flow Bar renderer died. Drop the session and say so. The microphone message is a different failure. */
+  abortBarCrash(): void {
+    this.generation += 1
+    this.sessionTarget = null
+    this.setError(BAR_CRASH_MESSAGE)
   }
 
   cancel(): void {

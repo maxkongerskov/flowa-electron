@@ -60,8 +60,11 @@ function pipe(child: ChildProcessWithoutNullStreams, onLine: (line: string) => v
       const line = buf.slice(0, i).trim()
       buf = buf.slice(i + 1)
       if (line === 'ready') finish(true)
-      else if (line === 'denied') finish(false)
-      else if (line) onLine(line)
+      else if (line === 'denied') {
+        // Before ready, the tap never started. After ready, the parent must hear it.
+        if (!settled) finish(false)
+        else onLine(line)
+      } else if (line) onLine(line)
     }
   })
   child.on('exit', (code) => {

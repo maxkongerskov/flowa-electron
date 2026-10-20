@@ -22,13 +22,24 @@ import { isLoginItemEnabled, setLoginItemEnabled } from './loginItem'
 import { runRepair } from './repair'
 import { openKeyboardSettings } from './permissions'
 import { runSelfTest } from './selftest'
-import { UpdateChecker } from './updates'
+import { isE2EBuild } from '@shared/updateTrust'
+import { noteE2E, UpdateChecker } from './updates'
 
 configureUserDataPath()
+if (isE2EBuild()) {
+  app.disableHardwareAcceleration()
+  if (process.env.FLOWA_E2E_NO_SANDBOX === '1') {
+    app.commandLine.appendSwitch('no-sandbox')
+    app.commandLine.appendSwitch('disable-setuid-sandbox')
+  }
+}
 app.setName('Flowa')
 if (process.platform === 'win32') app.setAppUserModelId('com.maxkongerskov.FlowaElectron')
 
-if (!app.requestSingleInstanceLock()) {
+// The packaged update test restarts a second copy before the first has quit.
+// Production builds still take the lock.
+const skipSingleInstance = isE2EBuild() && process.env.FLOWA_E2E_AUTO_UPDATE === '1'
+if (!skipSingleInstance && !app.requestSingleInstanceLock()) {
   app.quit()
 } else {
   void main()
@@ -36,6 +47,7 @@ if (!app.requestSingleInstanceLock()) {
 
 async function main(): Promise<void> {
   await app.whenReady()
+  noteE2E(`booted ${app.getVersion()} pid=${process.pid}`)
 
   // Only our own pages may use the microphone.
   const ours = (url: string): boolean => url.startsWith('file://') || (!!process.env.ELECTRON_RENDERER_URL && url.startsWith(process.env.ELECTRON_RENDERER_URL))
@@ -49,6 +61,10 @@ async function main(): Promise<void> {
   const bar = new FlowBar()
   const pipeline = new DictationPipeline(bar)
   const hotkey = new GlobalHotkey(pipeline, bar)
+  bar.onCrashed = () => {
+    if (hotkey.session === 'recording') hotkey.cancelListening()
+    pipeline.abortBarCrash()
+  }
   bar.onCancel = () => hotkey.cancelListening()
   bar.onCommit = () => hotkey.commitListening()
   let launchAtLogin = isLoginItemEnabled()
@@ -65,6 +81,10 @@ async function main(): Promise<void> {
           e.preventDefault()
           mainWindow?.hide()
         }
+      })
+      mainWindow.on('hide', () => {
+        // Closing the window does not unmount the shortcut recorder, so resume here too.
+        void hotkey.resume()
       })
       mainWindow.on('focus', () => {
         void permissions.check()
@@ -134,6 +154,7 @@ async function main(): Promise<void> {
       machineNoun: machineNoun(process.platform),
       version: app.getVersion(),
       prefs: prefs.all,
+      prefsWarning: prefs.warning,
       permissions: perms,
       allGranted: allGranted(perms),
       conflict: conflictStatus(),

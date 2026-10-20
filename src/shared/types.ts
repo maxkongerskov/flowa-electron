@@ -68,6 +68,8 @@ export interface AppState {
   machineNoun: string
   version: string
   prefs: Prefs
+  /** Set when prefs.json could not be parsed and was replaced with defaults. */
+  prefsWarning: string | null
   permissions: PermissionsState
   allGranted: boolean
   conflict: ConflictStatus

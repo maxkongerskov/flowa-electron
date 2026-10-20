@@ -36,12 +36,13 @@ const sha1 = (f) =>
   })
 
 fs.mkdirSync(path.dirname(dest), { recursive: true })
-const linkIdx = process.argv.indexOf('--link')
-if (linkIdx > 0) {
-  const from = process.argv[linkIdx + 1]
-  try { fs.linkSync(from, dest) } catch { fs.copyFileSync(from, dest) }
-} else if (!fs.existsSync(dest)) {
-  const partial = `${dest}.partial`
+
+async function sha1Matches(file) {
+  if (!fs.existsSync(file)) return false
+  return (await sha1(file)) === SHA1
+}
+
+async function downloadTo(partial) {
   const res = await fetch(URL_)
   if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
   const total = Number(res.headers.get('content-length') || 0)
@@ -56,12 +57,32 @@ if (linkIdx > 0) {
     }
   })
   await pipeline(body, fs.createWriteStream(partial))
-  fs.renameSync(partial, dest)
   process.stdout.write('\n')
 }
-const sum = await sha1(dest)
-if (sum !== SHA1) {
-  console.error(`checksum mismatch: ${sum} (expected ${SHA1})`)
-  process.exit(1)
+
+const linkIdx = process.argv.indexOf('--link')
+if (linkIdx > 0) {
+  const from = process.argv[linkIdx + 1]
+  try { fs.linkSync(from, dest) } catch { fs.copyFileSync(from, dest) }
+  if (!(await sha1Matches(dest))) {
+    console.error(`checksum mismatch for linked file (expected ${SHA1})`)
+    process.exit(1)
+  }
+} else if (await sha1Matches(dest)) {
+  // The file on disk already matches. Leave it in place.
+} else {
+  if (fs.existsSync(dest)) {
+    console.error(`${dest} failed ${SHA1}; downloading again`)
+    fs.rmSync(dest)
+  }
+  const partial = `${dest}.partial`
+  await downloadTo(partial)
+  const partialSum = await sha1(partial)
+  if (partialSum !== SHA1) {
+    fs.rmSync(partial, { force: true })
+    console.error(`checksum mismatch: ${partialSum} (expected ${SHA1})`)
+    process.exit(1)
+  }
+  fs.renameSync(partial, dest)
 }
-console.log(`OK ${dest} sha1=${sum}`)
+console.log(`OK ${dest} sha1=${SHA1}`)

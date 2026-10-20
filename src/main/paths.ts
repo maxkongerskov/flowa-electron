@@ -56,8 +56,26 @@ export const paths = {
 }
 
 export function writeFileAtomic(file: string, data: string | Uint8Array): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const dir = path.dirname(file)
+  fs.mkdirSync(dir, { recursive: true })
   const tmp = `${file}.${process.pid}.tmp`
-  fs.writeFileSync(tmp, data)
+  const fd = fs.openSync(tmp, 'w')
+  try {
+    fs.writeFileSync(fd, data)
+    fs.fsyncSync(fd)
+  } finally {
+    fs.closeSync(fd)
+  }
   fs.renameSync(tmp, file)
+  // Flush the directory entry. Some filesystems reject a directory fsync.
+  try {
+    const dirFd = fs.openSync(dir, 'r')
+    try {
+      fs.fsyncSync(dirFd)
+    } finally {
+      fs.closeSync(dirFd)
+    }
+  } catch {
+    /* ignore */
+  }
 }

@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, nativeTheme, screen, shell } from 'electron'
 import path from 'node:path'
+import { BAR_CRASH_MESSAGE, crashReply } from '@shared/barCrash'
 import type { CaptureResult, CaptureStartRequest } from '@shared/types'
 import type { CaptureBridge } from './pipeline'
 import type { FlowBarPanel } from './hotkey'
@@ -64,9 +65,11 @@ export class FlowBar implements FlowBarPanel, CaptureBridge {
   readonly win: BrowserWindow
   private presentationGeneration = 0
   private reqId = 0
-  private pending = new Map<number, (v: unknown) => void>()
+  private pending = new Map<number, { channel: string; resolve: (v: unknown) => void }>()
+  private recovering = false
   onCancel: () => void = () => {}
   onCommit: () => void = () => {}
+  onCrashed: () => void = () => {}
 
   constructor() {
     const mac = process.platform === 'darwin'
@@ -101,40 +104,79 @@ export class FlowBar implements FlowBarPanel, CaptureBridge {
     this.win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true })
     hardenWebContents(this.win)
     loadPage(this.win, 'bar')
+    this.win.webContents.on('render-process-gone', (_event, details) => {
+      this.recoverRenderer(details.reason || 'gone')
+    })
+    this.win.webContents.on('unresponsive', () => {
+      this.recoverRenderer('unresponsive')
+    })
 
     ipcMain.on('bar:reply', (e, id: unknown, value: unknown) => {
       if (e.sender !== this.win.webContents || typeof id !== 'number') return
-      const resolve = this.pending.get(id)
-      if (resolve) {
+      const pending = this.pending.get(id)
+      if (pending) {
         this.pending.delete(id)
-        resolve(value)
+        pending.resolve(value)
       }
     })
     ipcMain.on('bar:cancel', (e) => e.sender === this.win.webContents && this.onCancel())
     ipcMain.on('bar:commit', (e) => e.sender === this.win.webContents && this.onCommit())
   }
 
-  private request<T>(channel: string, payload: unknown, timeoutMs: number, fallback: T): Promise<T> {
+  private request<T>(channel: string, payload: unknown, timeoutMs: number, fallback: T, onTimeout?: () => void): Promise<T> {
     const id = ++this.reqId
     return new Promise<T>((resolve) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)
+        onTimeout?.()
         resolve(fallback)
       }, timeoutMs)
-      this.pending.set(id, (v) => {
-        clearTimeout(timer)
-        resolve(v as T)
+      this.pending.set(id, {
+        channel,
+        resolve: (v) => {
+          clearTimeout(timer)
+          resolve(v as T)
+        }
       })
+      if (this.win.isDestroyed() || this.win.webContents.isCrashed()) {
+        clearTimeout(timer)
+        this.pending.delete(id)
+        resolve(fallback)
+        return
+      }
       this.win.webContents.send(channel, id, payload)
     })
   }
 
+  private recoverRenderer(reason: string): void {
+    console.error(`[Flowa] flow bar renderer ${reason}`)
+    for (const [id, pending] of this.pending) {
+      this.pending.delete(id)
+      pending.resolve(crashReply(pending.channel))
+    }
+    this.onCrashed()
+    if (this.win.isDestroyed() || this.recovering) return
+    this.recovering = true
+    this.win.webContents.once('did-finish-load', () => {
+      this.recovering = false
+    })
+    loadPage(this.win, 'bar')
+  }
+
   // CaptureBridge
   start(req: CaptureStartRequest): Promise<{ ok: true } | { ok: false; message: string }> {
-    return this.request('capture:start', req, 15_000, {
-      ok: false as const,
-      message: "Couldn't start recording. Check your microphone and try again."
-    })
+    return this.request(
+      'capture:start',
+      req,
+      15_000,
+      {
+        ok: false as const,
+        message: "Couldn't start recording. Check your microphone and try again."
+      },
+      () => {
+        if (!this.win.isDestroyed()) this.win.webContents.send('capture:cancel', 0, req.generation)
+      }
+    )
   }
 
   async stop(generation: number): Promise<CaptureResult> {

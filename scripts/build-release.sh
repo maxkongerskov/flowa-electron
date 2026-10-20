@@ -50,7 +50,9 @@ fi
 for d in darwin-arm64/whisper-server darwin-x64/whisper-server win32-x64/whisper-server.exe linux-x64/whisper-server; do
   [ -f "resources/bin/$d" ] || { echo "Missing engine resources/bin/$d" >&2; exit 1; }
 done
-[ -x resources/mac/flowa-helper ] || bash scripts/build-mac-helper.sh
+if [ ! -x resources/mac/flowa-helper ] || [ native/macos/flowa-helper.swift -nt resources/mac/flowa-helper ]; then
+  bash scripts/build-mac-helper.sh
+fi
 
 bash scripts/build-mac-icons.sh
 npx --no-install electron-vite build
@@ -65,6 +67,10 @@ for ARCH in arm64 x64; do
   echo "▶ macOS $ARCH: build app"
   $EB --mac dir --$ARCH -c.mac.identity=null
   if [ "$ARCH" = arm64 ]; then APP="$OUT/mac-arm64/Flowa.app"; else APP="$OUT/mac/Flowa.app"; fi
+  # `dir` does not run electron-builder's afterPack publish step, so the yml
+  # would be missing and Mac downloads would fail with ENOENT. Write it before
+  # the bundle is signed.
+  node scripts/app-update-yml.mjs write "$APP/Contents/Resources"
   echo "▶ macOS $ARCH: sign app with $SIGN_ID"
   IDENTITY="$SIGN_ID" NOTARY_PROFILE="$NOTARY_PROFILE" bash scripts/sign-mac.sh "$APP"
   # Names match scripts/update-feed.mjs macZipName. The x64 name must not contain "arm64".
@@ -72,7 +78,8 @@ for ARCH in arm64 x64; do
   echo "▶ macOS $ARCH: updater zip"
   rm -f "$ZIP"
   ditto -c -k --keepParent "$APP" "$ZIP"
-  codesign --force --timestamp --sign "$SIGN_ID" "$ZIP"
+  # The zip is a container. The app inside is already signed. codesign on the
+  # zip itself is not what electron-updater checks.
   if [ -n "$NOTARY_PROFILE" ]; then
     echo "▶ macOS $ARCH: notarize updater zip"
     xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
@@ -117,7 +124,14 @@ file "$OUT"/linux-unpacked/resources/bin/whisper-server | grep -q "ELF 64-bit"
 [ -f "$OUT/Flowa-$VERSION-arm64.dmg" ]
 [ -f "$OUT/Flowa-$VERSION-x64.dmg" ]
 
-echo "▶ update feed (sha512 and size from the final files)"
+echo "▶ app-update.yml in every unpacked bundle"
+node scripts/app-update-yml.mjs assert \
+  "$OUT/mac-arm64/Flowa.app/Contents/Resources" \
+  "$OUT/mac/Flowa.app/Contents/Resources" \
+  "$OUT/win-unpacked/resources" \
+  "$OUT/linux-unpacked/resources"
+
+echo "▶ update feed (sha512, size, and ed25519 from the final files)"
 node scripts/update-feed.mjs "$OUT" "$VERSION"
 
 echo "✓ Release files in $OUT/:"

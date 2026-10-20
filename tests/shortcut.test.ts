@@ -139,5 +139,25 @@ describe('dictation shortcut', () => {
     step = modifierWatchStep(step.state, 'mod-down LeftControl', 'RightAlt')
     step = modifierWatchStep(step.state, 'mod-up RightAlt', 'RightAlt')
     expect(step.fire).toBe(false)
+
+    state = initialModWatch()
+    step = modifierWatchStep(state, 'mod-down RightAlt', 'RightAlt')
+    step = modifierWatchStep(step.state, 'pointer', 'RightAlt')
+    step = modifierWatchStep(step.state, 'mod-up RightAlt', 'RightAlt')
+    expect(step.fire).toBe(false)
+
+    state = initialModWatch()
+    step = modifierWatchStep(state, 'mod-down RightAlt', 'RightAlt')
+    step = modifierWatchStep(step.state, 'reset', 'RightAlt')
+    step = modifierWatchStep(step.state, 'mod-up RightAlt', 'RightAlt')
+    expect(step.fire).toBe(false)
+    expect(step.state.armed).toBe(false)
+  })
+
+  it('rejects lock keys as a shortcut by themselves', () => {
+    expect(validateShortcut('PrintScreen', 'win32').ok).toBe(false)
+    expect(validateShortcut('Scrolllock', 'win32').ok).toBe(false)
+    expect(validateShortcut('Numlock', 'linux').ok).toBe(false)
+    expect(validateShortcut('F8', 'win32').ok).toBe(true)
   })
 })

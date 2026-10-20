@@ -11,6 +11,7 @@ import { createReadStream, existsSync, readdirSync, readFileSync, statSync, unli
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { publicKeyFromPrivate, sha256File, signSha256, verifySha256 } from './update-trust.mjs'
 
 const require = createRequire(import.meta.url)
 const yaml = require('js-yaml')
@@ -70,6 +71,7 @@ export function renderUpdateYaml({ version, files, releaseDate }) {
     lines.push(`  - url: ${yamlScalar(file.url)}`)
     lines.push(`    sha512: ${yamlScalar(file.sha512)}`)
     lines.push(`    size: ${file.size}`)
+    if (file.ed25519) lines.push(`    ed25519: ${yamlScalar(file.ed25519)}`)
   }
   lines.push(`path: ${yamlScalar(files[0].url)}`)
   lines.push(`sha512: ${yamlScalar(files[0].sha512)}`)
@@ -105,7 +107,7 @@ function artifactNames(dir) {
   })
 }
 
-export async function verifyUpdateFeeds(dir, version) {
+export async function verifyUpdateFeeds(dir, version, options = {}) {
   const errors = []
   const names = artifactNames(dir)
   const channels = [...new Set(names.map((name) => channelForArtifact(name)))]
@@ -136,6 +138,14 @@ export async function verifyUpdateFeeds(dir, version) {
       const hashed = await hashFile(full)
       if (hashed.size !== file.size) errors.push(`${file.url}: size ${file.size} != ${hashed.size}`)
       if (hashed.sha512 !== file.sha512) errors.push(`${file.url}: sha512 mismatch`)
+      if (options.requireSignatures && typeof file.ed25519 !== 'string') errors.push(`${file.url}: missing ed25519`)
+      if (typeof file.ed25519 === 'string') {
+        if (!options.publicKeyPem) errors.push(`${file.url}: ed25519 present but no public key was provided`)
+        else {
+          const digest = await sha256File(full)
+          if (!verifySha256(options.publicKeyPem, digest, file.ed25519)) errors.push(`${file.url}: ed25519 mismatch`)
+        }
+      }
     }
     for (const name of names.filter((item) => channelForArtifact(item) === channel)) {
       if (!listed.has(name)) errors.push(`${channel}: omitted ${name}`)
@@ -159,9 +169,11 @@ export async function verifyUpdateFeeds(dir, version) {
     if (!dmgs.some((name) => name.toLowerCase().includes('arm64'))) errors.push('missing arm64 dmg')
     if (!dmgs.some((name) => !name.toLowerCase().includes('arm64'))) errors.push('missing x64 dmg')
   }
-  for (const name of names) {
-    if (!wantsBlockMap(name)) continue
-    if (!existsSync(path.join(dir, `${name}.blockmap`))) errors.push(`missing blockmap for ${name}`)
+  if (options.requireBlockMaps !== false) {
+    for (const name of names) {
+      if (!wantsBlockMap(name)) continue
+      if (!existsSync(path.join(dir, `${name}.blockmap`))) errors.push(`missing blockmap for ${name}`)
+    }
   }
   return errors
 }
@@ -186,17 +198,25 @@ export async function writeUpdateFeeds(dir, version, options = {}) {
     groups.set(channel, list)
   }
   const written = []
+  const privateKeyPem = options.privateKeyPem || null
   for (const [channel, files] of groups) {
     const sorted = sortFeedFiles(files)
     const hashed = []
     for (const name of sorted) {
-      const info = await hashFile(path.join(dir, name))
-      hashed.push({ url: name, sha512: info.sha512, size: info.size })
+      const full = path.join(dir, name)
+      const info = await hashFile(full)
+      const entry = { url: name, sha512: info.sha512, size: info.size }
+      if (privateKeyPem) entry.ed25519 = signSha256(privateKeyPem, await sha256File(full))
+      hashed.push(entry)
     }
     writeFileSync(path.join(dir, channel), renderUpdateYaml({ version, files: hashed, releaseDate }))
     written.push(channel)
   }
-  const errors = await verifyUpdateFeeds(dir, version)
+  const verifyOptions = {
+    requireBlockMaps: options.blockMaps !== false,
+    ...(privateKeyPem ? { requireSignatures: true, publicKeyPem: publicKeyFromPrivate(privateKeyPem) } : {})
+  }
+  const errors = await verifyUpdateFeeds(dir, version, verifyOptions)
   if (errors.length > 0) throw new Error(errors.join('\n'))
   return written.sort()
 }
@@ -210,13 +230,23 @@ async function main() {
     process.exit(1)
   }
   const resolved = path.resolve(dir)
+  const keyFile = process.env.FLOWA_UPDATE_KEY
+  let privateKeyPem = null
+  if (keyFile) {
+    if (!existsSync(keyFile)) throw new Error(`FLOWA_UPDATE_KEY not found: ${keyFile}`)
+    privateKeyPem = readFileSync(keyFile, 'utf8')
+  } else if (!verifyOnly && process.env.FLOWA_REQUIRE_NOTARY === '1') {
+    throw new Error('FLOWA_UPDATE_KEY is required to sign the update feed. Run bash scripts/generate-update-key.sh')
+  }
   if (verifyOnly) {
-    const errors = await verifyUpdateFeeds(resolved, version)
+    const errors = await verifyUpdateFeeds(resolved, version, privateKeyPem
+      ? { requireSignatures: true, publicKeyPem: publicKeyFromPrivate(privateKeyPem) }
+      : {})
     if (errors.length > 0) throw new Error(errors.join('\n'))
     console.log(`✓ ${resolved} matches the update feed`)
     return
   }
-  const written = await writeUpdateFeeds(resolved, version)
+  const written = await writeUpdateFeeds(resolved, version, { privateKeyPem })
   console.log(`✓ update feed: ${written.join(', ')}`)
 }
 

@@ -4,12 +4,13 @@
 // keep the public installer link (dmg / exe / AppImage / deb).
 
 import { spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { appendFileSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { app, shell } from 'electron'
 import type { AppUpdater, ProgressInfo, UpdateInfo } from 'electron-updater'
 import {
   UPDATE_REPOSITORY,
+  fileBaseName,
   installKindForRuntime,
   interpretUpdateCheck,
   isFlowaReleaseUrl,
@@ -22,10 +23,31 @@ import {
   type UpdateInstallKind,
   type UpdateState
 } from '@shared/updates'
+import {
+  e2eAllowsUnsigned,
+  e2eAutoUpdate,
+  e2eFeedUrl,
+  isE2EBuild,
+  sha256File,
+  updatePublicKey,
+  updateSignatureDecision
+} from '@shared/updateTrust'
 
 type UpdaterModule = { autoUpdater: AppUpdater }
 
 const DOWNLOAD_FAILED = "Couldn't download the update. You can download it from the release page."
+const SIGNATURE_REJECTED = "This update failed Flowa's signature check and was not installed."
+
+export function noteE2E(line: string, env: NodeJS.ProcessEnv = process.env): void {
+  if (!isE2EBuild()) return
+  const file = env.FLOWA_E2E_STATUS
+  if (!file) return
+  try {
+    appendFileSync(file, `${line}\n`)
+  } catch (err) {
+    console.warn('[Flowa] e2e status write failed', err instanceof Error ? err.message : err)
+  }
+}
 
 const log = {
   info: (message?: unknown): void => console.log(`[Flowa] ${message ?? ''}`),
@@ -40,6 +62,7 @@ export class UpdateChecker {
   private downloadTask: Promise<void> | null = null
   private updater: AppUpdater | null = null
   private installStarted = false
+  private signatures = new Map<string, string>()
 
   constructor(onChange: () => void) {
     this.onChange = onChange
@@ -106,18 +129,46 @@ export class UpdateChecker {
       updater.autoDownload = false
       updater.autoInstallOnAppQuit = true
       updater.autoRunAppAfterInstall = true
-      await updater.downloadUpdate()
-      if (this.state.kind === 'downloading') {
-        this.state = noteDownloadComplete(this.state)
+      const files = await updater.downloadUpdate()
+      if (!(await this.trustDownloaded(files))) return
+      const current = this.state as UpdateState
+      if (current.kind === 'downloading' || current.kind === 'downloaded') {
+        this.state = noteDownloadComplete(current)
         this.onChange()
         this.install()
       }
     } catch (err) {
       console.warn('[Flowa] update download failed:', err instanceof Error ? err.message : err)
-      if (this.state.kind === 'downloading' || this.state.kind === 'downloaded' || this.state.kind === 'installing') {
-        this.state = noteDownloadFailed(this.state, DOWNLOAD_FAILED)
-        this.onChange()
+      this.failDownload(DOWNLOAD_FAILED)
+    }
+  }
+
+  private async trustDownloaded(files: string[]): Promise<boolean> {
+    if (e2eAllowsUnsigned()) return files.length > 0
+    if (files.length === 0) {
+      this.failDownload(SIGNATURE_REJECTED)
+      return false
+    }
+    const publicKeyPem = updatePublicKey()
+    for (const file of files) {
+      const signature = this.signatures.get(path.basename(file)) ?? null
+      const digest = await sha256File(file)
+      if (updateSignatureDecision({ publicKeyPem, digest, signature }) !== 'ok') {
+        console.warn(`[Flowa] rejected update signature for ${path.basename(file)}`)
+        if (this.updater) this.updater.autoInstallOnAppQuit = false
+        this.failDownload(SIGNATURE_REJECTED)
+        noteE2E('rejected')
+        return false
       }
+    }
+    return true
+  }
+
+  private failDownload(message: string): void {
+    this.installStarted = false
+    if (this.state.kind === 'downloading' || this.state.kind === 'downloaded' || this.state.kind === 'installing' || this.state.kind === 'available') {
+      this.state = noteDownloadFailed(this.state, message)
+      this.onChange()
     }
   }
 
@@ -128,9 +179,15 @@ export class UpdateChecker {
     this.installStarted = true
     this.state = next
     this.onChange()
-    // Silent NSIS (/S) plus relaunch. MacUpdater ignores the flags and uses
-    // autoRunAppAfterInstall, which was set before the download finished.
-    this.updater?.quitAndInstall(true, true)
+    noteE2E(`installing ${next.version}`)
+    try {
+      // Silent NSIS (/S) plus relaunch. MacUpdater ignores the flags and uses
+      // autoRunAppAfterInstall, which was set before the download finished.
+      this.updater?.quitAndInstall(true, true)
+    } catch (err) {
+      console.warn('[Flowa] quitAndInstall failed:', err instanceof Error ? err.message : err)
+      this.failDownload(DOWNLOAD_FAILED)
+    }
   }
 
   private async run(manual: boolean): Promise<void> {
@@ -163,6 +220,7 @@ export class UpdateChecker {
       updater.autoInstallOnAppQuit = false
       updater.autoRunAppAfterInstall = true
       const checked = await updater.checkForUpdates()
+      this.signatures = signaturesFrom(checked)
       outcome = outcomeFrom(checked)
     } catch (err) {
       console.warn('[Flowa] update check failed:', err instanceof Error ? err.message : err)
@@ -205,11 +263,16 @@ export class UpdateChecker {
     updater.allowDowngrade = false
     updater.allowPrerelease = false
     updater.disableWebInstaller = true
-    updater.setFeedURL({
-      provider: 'github',
-      owner: UPDATE_REPOSITORY.owner,
-      repo: UPDATE_REPOSITORY.repo
-    })
+    const feed = e2eFeedUrl()
+    if (feed) {
+      updater.setFeedURL({ provider: 'generic', url: feed })
+    } else {
+      updater.setFeedURL({
+        provider: 'github',
+        owner: UPDATE_REPOSITORY.owner,
+        repo: UPDATE_REPOSITORY.repo
+      })
+    }
     // Registered before any download so electron-updater emits progress.
     updater.on('download-progress', (progress: ProgressInfo) => {
       this.state = noteDownloadProgress(this.state, {
@@ -220,15 +283,14 @@ export class UpdateChecker {
       this.onChange()
     })
     updater.on('update-downloaded', () => {
+      if (this.state.kind !== 'downloading' && this.state.kind !== 'available') return
       this.state = noteDownloadComplete(this.state)
       this.onChange()
-      this.install()
     })
     updater.on('error', (err) => {
       if (this.state.kind !== 'downloading' && this.state.kind !== 'downloaded' && this.state.kind !== 'installing') return
       console.warn('[Flowa] updater error:', err instanceof Error ? err.message : err)
-      this.state = noteDownloadFailed(this.state, DOWNLOAD_FAILED)
-      this.onChange()
+      this.failDownload(DOWNLOAD_FAILED)
     })
     this.updater = updater
     return updater
@@ -239,6 +301,7 @@ export class UpdateChecker {
     this.state = next
     if (next.kind === 'available') console.log(`[Flowa] update available: ${next.version} autoInstall=${next.autoInstall}`)
     this.onChange()
+    if (next.kind === 'available' && next.autoInstall && e2eAutoUpdate()) void this.download()
   }
 }
 
@@ -254,6 +317,19 @@ function readLinuxPackageType(): string | null {
   } catch {
     return null
   }
+}
+
+function signaturesFrom(checked: { updateInfo?: UpdateInfo | null } | null): Map<string, string> {
+  const map = new Map<string, string>()
+  const files = checked?.updateInfo?.files
+  if (!Array.isArray(files)) return map
+  for (const file of files) {
+    const url = file && typeof file.url === 'string' ? file.url : ''
+    const extra = file as unknown as { ed25519?: unknown }
+    const signature = file && typeof extra.ed25519 === 'string' ? extra.ed25519 : ''
+    if (url && signature) map.set(fileBaseName(url), signature)
+  }
+  return map
 }
 
 function outcomeFrom(checked: { isUpdateAvailable: boolean; updateInfo: UpdateInfo } | null): UpdateCheckOutcome {
