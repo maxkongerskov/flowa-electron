@@ -28,9 +28,12 @@ module.exports = {
     icon: 'build/icon.ico',
     target: [{ target: 'nsis', arch: ['x64'] }]
   },
+  // Assisted, same as the release installer. One-click would install under
+  // Programs\flowa-e2e; /S /currentuser installs under Programs\FlowaE2E.
   nsis: {
-    oneClick: true,
+    oneClick: false,
     perMachine: false,
+    allowToChangeInstallationDirectory: true,
     artifactName: 'Flowa-Setup-${version}-${arch}.${ext}'
   },
   linux: {

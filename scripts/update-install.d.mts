@@ -42,3 +42,40 @@ export function installRelaunchTimeoutMessage(
   fromPid: number | null,
   pidAlive: (pid: number) => boolean
 ): string
+
+export const E2E_SESSION_FILE: string
+
+export type E2ESession = {
+  statusFile: string
+  feedUrl: string
+  publicKey: string
+  autoUpdate: boolean
+  noSandbox: boolean
+}
+
+export function e2eSessionPath(platform: string, loginHome: string, env?: NodeJS.ProcessEnv): string
+export function sessionFromEnv(env: NodeJS.ProcessEnv, platform: string): E2ESession
+export function parseE2ESession(text: string | null, platform: string): E2ESession | null
+export function mergeE2ESession(fromEnv: E2ESession, fromFile: E2ESession | null): E2ESession
+export function applyE2ESession(env: NodeJS.ProcessEnv, session: E2ESession): NodeJS.ProcessEnv
+export function restoreE2ESession(args: {
+  e2e: boolean
+  env: NodeJS.ProcessEnv
+  platform: string
+  loginHome: string
+  readText: (file: string) => string | null
+  writeText: (file: string, text: string) => void
+}): { persisted: boolean; path: string | null }
+export function writeE2ESessionFile(file: string, text: string): void
+export function shipItLabel(bundleId?: string): string
+export function shipItCleanupPlan(
+  loginHome: string,
+  uid: number,
+  bundleId?: string
+): {
+  label: string
+  plist: string
+  cacheDir: string
+  bootout: string[]
+  remove: string[]
+}

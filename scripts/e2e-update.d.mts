@@ -15,3 +15,6 @@ export function macFeedOptions(
 }
 export function assertMacRehearsal(positive: string, negative: string, from?: string, to?: string): void
 export function rewriteChecksumKeepSignature(ymlPath: string, filePath: string): Promise<void>
+export function cleanupE2ERehearsal(statusText?: string): Promise<void>
+export function windowsInstallerArgs(): string[]
+export function windowsInstalledExe(localAppData: string, productName?: string): string

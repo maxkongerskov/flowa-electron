@@ -25,10 +25,12 @@ import { writeUpdateFeeds } from './update-feed.mjs'
 import { writeAppUpdateYml } from './app-update-yml.mjs'
 import {
   E2E_PRODUCT_NAME,
+  e2eSessionPath,
   installQuitFailure,
   installRelaunchReady,
   installRelaunchTimeoutMessage,
-  noteInstalling
+  noteInstalling,
+  shipItCleanupPlan
 } from './update-install.mjs'
 
 const require = createRequire(import.meta.url)
@@ -164,6 +166,59 @@ function killPid(pid) {
   try { process.kill(pid, 'SIGTERM') } catch { /* already gone */ }
 }
 
+function killNamed(name, force) {
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/F', '/T', '/IM', `${name}.exe`], { stdio: 'ignore' })
+    return
+  }
+  spawnSync('pkill', [force ? '-KILL' : '-TERM', '-x', name], { stdio: 'ignore' })
+}
+
+/** The relaunched app is not a child of the rehearsal. Stop it, then drop the e2e ShipIt job and e2e.json. */
+export async function cleanupE2ERehearsal(statusText = '') {
+  const home = os.userInfo().homedir
+  if (process.platform === 'darwin') {
+    const plan = shipItCleanupPlan(home, typeof process.getuid === 'function' ? process.getuid() : 0)
+    spawnSync(plan.bootout[0], plan.bootout.slice(1), { stdio: 'ignore' })
+    spawnSync(plan.remove[0], plan.remove.slice(1), { stdio: 'ignore' })
+    rmSync(plan.plist, { force: true })
+    rmSync(plan.cacheDir, { recursive: true, force: true })
+  }
+  for (const pid of pidsIn(statusText)) killPid(pid)
+  killNamed(E2E_PRODUCT_NAME, false)
+  await new Promise((resolve) => setTimeout(resolve, 500))
+  for (const pid of pidsIn(statusText)) {
+    try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ }
+  }
+  killNamed(E2E_PRODUCT_NAME, true)
+  rmSync(e2eSessionPath(process.platform, home, process.env), { force: true })
+}
+
+async function finishLaunch(pending) {
+  let text = ''
+  let child = null
+  try {
+    const result = await pending
+    text = result.text
+    child = result.child
+    return text
+  } finally {
+    if (child?.pid) {
+      try { process.kill(-child.pid, 'SIGTERM') } catch { /* group already gone */ }
+    }
+    await cleanupE2ERehearsal(text)
+  }
+}
+
+/** Silent per-user install, matching the assisted NSIS the release ships. */
+export function windowsInstallerArgs() {
+  return ['/S', '/currentuser']
+}
+
+export function windowsInstalledExe(localAppData, productName = E2E_PRODUCT_NAME) {
+  return path.win32.join(localAppData, 'Programs', productName, `${productName}.exe`)
+}
+
 async function buildVite() {
   await runNodeCli('electron-vite', ['build'], { ...process.env, FLOWA_E2E_UPDATES: '1' })
 }
@@ -244,6 +299,7 @@ function appEnv(base, feedUrl, publicKey, statusFile, home) {
 }
 
 async function linuxAppImage(work, publicKey, privateKey) {
+  await cleanupE2ERehearsal()
   console.log('▶ linux AppImage packages')
   await buildPackage(FROM, path.join(work, 'from'), ['--linux', 'AppImage', '--x64'])
   await buildPackage(TO, path.join(work, 'to'), ['--linux', 'AppImage', '--x64'])
@@ -277,14 +333,7 @@ async function linuxAppImage(work, publicKey, privateKey) {
     env.DISPLAY = xvfb.display
     env.APPIMAGE = image
     try {
-      const result = await launchAndWait(image, ['--no-sandbox'], env, status, predicate, timeoutMs, log)
-      for (const pid of pidsIn(result.text)) killPid(pid)
-      await new Promise((resolve) => setTimeout(resolve, 500))
-      for (const pid of pidsIn(result.text)) {
-        try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ }
-      }
-      try { process.kill(-result.child.pid, 'SIGTERM') } catch { /* group already gone */ }
-      return result.text
+      return await finishLaunch(launchAndWait(image, ['--no-sandbox'], env, status, predicate, timeoutMs, log))
     } finally {
       xvfb.child.kill('SIGTERM')
     }
@@ -307,6 +356,7 @@ async function linuxAppImage(work, publicKey, privateKey) {
     console.log('✓ AppImage updated 9.9.0 → 9.9.1 and rejected a tampered file')
   } finally {
     server.close()
+    await cleanupE2ERehearsal()
   }
 }
 
@@ -316,6 +366,7 @@ function canSudo() {
 }
 
 async function linuxDeb(work, publicKey, privateKey) {
+  await cleanupE2ERehearsal()
   if (!canSudo()) {
     console.log('Deb update test skipped: sudo is not available without a password.')
     return
@@ -352,19 +403,18 @@ async function linuxDeb(work, publicKey, privateKey) {
     await new Promise((resolve) => setTimeout(resolve, 400))
     const env = appEnv(process.env, url, publicKey, status, home)
     env.DISPLAY = xvfb.display
-    let result
+    let text
     try {
-      result = await launchAndWait(exe, ['--no-sandbox'], env, status, 'positive', 180_000, log)
+      text = await finishLaunch(launchAndWait(exe, ['--no-sandbox'], env, status, 'positive', 180_000, log))
     } finally {
       xvfb.child.kill('SIGTERM')
     }
     console.log('--- deb status ---')
-    console.log(result.text.trim())
-    for (const pid of pidsIn(result.text)) killPid(pid)
-    try { process.kill(-result.child.pid, 'SIGTERM') } catch { /* already gone */ }
+    console.log(text.trim())
     console.log('✓ deb updated 9.9.0 → 9.9.1 and the new version started on its own')
   } finally {
     server.close()
+    await cleanupE2ERehearsal()
   }
 }
 
@@ -394,6 +444,7 @@ export function assertMacRehearsal(positive, negative, from = FROM, to = TO) {
 }
 
 async function mac(work, publicKey, privateKey, arch) {
+  await cleanupE2ERehearsal()
   if (arch !== 'arm64' && arch !== 'x64') throw new Error(`unsupported mac arch ${arch}`)
   if (process.env.FLOWA_E2E_ALLOW_UNSIGNED === '1') {
     throw new Error('The Mac update test uses Developer ID. Unset FLOWA_E2E_ALLOW_UNSIGNED.')
@@ -435,14 +486,7 @@ async function mac(work, publicKey, privateKey, arch) {
     console.log(`▶ launch ${label}`)
     const env = appEnv(process.env, url, publicKey, status, home)
     const bin = path.join(appPath, 'Contents', 'MacOS', E2E_PRODUCT_NAME)
-    const result = await launchAndWait(bin, ['--no-sandbox'], env, status, predicate, 180_000, log)
-    for (const pid of pidsIn(result.text)) killPid(pid)
-    await new Promise((resolve) => setTimeout(resolve, 500))
-    for (const pid of pidsIn(result.text)) {
-      try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ }
-    }
-    try { process.kill(-result.child.pid, 'SIGTERM') } catch { /* group already gone */ }
-    return result.text
+    return finishLaunch(launchAndWait(bin, ['--no-sandbox'], env, status, predicate, 180_000, log))
   }
   try {
     const positive = await launch('positive', fromApp, 'positive')
@@ -457,10 +501,12 @@ async function mac(work, publicKey, privateKey, arch) {
     console.log(`✓ Mac ${arch} zip updated 9.9.0 → 9.9.1, quit, relaunched, and rejected a tampered zip`)
   } finally {
     server.close()
+    await cleanupE2ERehearsal()
   }
 }
 
 async function windows(work, publicKey, privateKey) {
+  await cleanupE2ERehearsal()
   console.log('▶ Windows NSIS packages')
   await buildPackage(FROM, path.join(work, 'from'), ['--win', 'nsis', '--x64'])
   await buildPackage(TO, path.join(work, 'to'), ['--win', 'nsis', '--x64'])
@@ -472,9 +518,9 @@ async function windows(work, publicKey, privateKey) {
   await writeUpdateFeeds(feed, TO, { privateKeyPem: privateKey, blockMaps: false, releaseDate: '2026-10-20T00:00:00.000Z' })
   const { server, url } = await serve(feed)
   try {
-    const installed = spawnSync(fromExe, ['/S'], { stdio: 'inherit' })
+    const installed = spawnSync(fromExe, windowsInstallerArgs(), { stdio: 'inherit' })
     if (installed.status !== 0) throw new Error(`NSIS install exited ${installed.status}`)
-    const exe = path.join(process.env.LOCALAPPDATA ?? '', 'Programs', E2E_PRODUCT_NAME, `${E2E_PRODUCT_NAME}.exe`)
+    const exe = windowsInstalledExe(process.env.LOCALAPPDATA ?? '')
     const started = Date.now()
     while (!existsSync(exe)) {
       if (Date.now() - started > 60_000) throw new Error(`installer did not produce ${exe}`)
@@ -485,12 +531,12 @@ async function windows(work, publicKey, privateKey) {
     const log = path.join(work, 'log-win.txt')
     require('node:fs').mkdirSync(home, { recursive: true })
     const env = appEnv(process.env, url, publicKey, status, home)
-    const result = await launchAndWait(exe, ['--no-sandbox'], env, status, 'positive', 180_000, log)
-    console.log(result.text.trim())
-    for (const pid of pidsIn(result.text)) killPid(pid)
+    const text = await finishLaunch(launchAndWait(exe, ['--no-sandbox'], env, status, 'positive', 180_000, log))
+    console.log(text.trim())
     console.log('✓ Windows NSIS updated 9.9.0 → 9.9.1, quit, and the new version started on its own')
   } finally {
     server.close()
+    await cleanupE2ERehearsal()
   }
 }
 

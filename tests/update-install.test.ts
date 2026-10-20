@@ -1,22 +1,28 @@
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it, afterEach } from 'vitest'
-import { cliInvocation } from '../scripts/e2e-update.mjs'
+import { cliInvocation, windowsInstalledExe, windowsInstallerArgs } from '../scripts/e2e-update.mjs'
 import {
   E2E_BUNDLE_ID,
   E2E_PRODUCT_NAME,
   RELEASE_BUNDLE_ID,
   UPDATE_QUIT_DEADLINE_MS,
+  e2eSessionPath,
   installQuitFailure,
   installRelaunchReady,
   installRelaunchTimeoutMessage,
   isQuittingForUpdate,
   markQuittingForUpdate,
   noteInstalling,
+  parseE2ESession,
   quitAndRelaunch,
   resetQuittingForUpdate,
+  restoreE2ESession,
+  shipItCleanupPlan,
   shouldKeepWindowOpen,
-  userDataFolderName
+  userDataFolderName,
+  writeE2ESessionFile
 } from '../scripts/update-install.mjs'
 
 afterEach(() => {
@@ -144,5 +150,161 @@ describe('e2e bundle identity', () => {
     expect(script).toContain('extraMetadata.name=flowa-e2e')
     expect(script).toContain('waitForPositiveUpdate')
     expect(script.match(/'positive'/g)?.length).toBeGreaterThanOrEqual(3)
+    expect(e2e).toContain('oneClick: false')
+    expect(e2e).toContain('allowToChangeInstallationDirectory: true')
+    expect(windowsInstallerArgs()).toEqual(['/S', '/currentuser'])
+    expect(windowsInstalledExe('C:\\Users\\runneradmin\\AppData\\Local')).toBe(
+      'C:\\Users\\runneradmin\\AppData\\Local\\Programs\\FlowaE2E\\FlowaE2E.exe'
+    )
+    const winFn = script.slice(script.indexOf('async function windows('))
+    expect(winFn).toContain('windowsInstallerArgs()')
+    expect(winFn).toContain('windowsInstalledExe(')
+    expect(winFn).toContain('finishLaunch')
+  })
+})
+
+const PEM = '-----BEGIN PUBLIC KEY-----\nABC\n-----END PUBLIC KEY-----'
+
+describe('e2e session survives a relaunch without the test environment', () => {
+  it('stores the file in the login app-support folder, not an overridden HOME', () => {
+    expect(e2eSessionPath('darwin', '/Users/max', { HOME: '/tmp/flowa-fake-home' })).toBe(
+      '/Users/max/Library/Application Support/Flowa-Electron-e2e/e2e.json'
+    )
+    expect(e2eSessionPath('linux', '/home/max', { HOME: '/tmp/flowa-fake-home', XDG_CONFIG_HOME: '/tmp/xdg' })).toBe(
+      '/home/max/.config/Flowa-Electron-e2e/e2e.json'
+    )
+    expect(
+      e2eSessionPath('win32', 'C:\\Users\\max', { APPDATA: 'C:\\Users\\max\\AppData\\Roaming' })
+    ).toBe('C:\\Users\\max\\AppData\\Roaming\\Flowa-Electron-e2e\\e2e.json')
+  })
+
+  it('does not read or write the file for a production build', () => {
+    let reads = 0
+    const env = { FLOWA_E2E_STATUS: '/tmp/status.txt', FLOWA_UPDATE_FEED: 'http://127.0.0.1:9/feed/' }
+    const result = restoreE2ESession({
+      e2e: false,
+      env,
+      platform: 'darwin',
+      loginHome: '/Users/max',
+      readText: () => {
+        reads += 1
+        return '{}'
+      },
+      writeText: () => {
+        throw new Error('production must not write e2e.json')
+      }
+    })
+    expect(reads).toBe(0)
+    expect(result).toEqual({ persisted: false, path: null })
+    expect(env.FLOWA_E2E_STATUS).toBe('/tmp/status.txt')
+  })
+
+  it('persists the first boot and restores it when the relaunch has an empty environment', () => {
+    const first: NodeJS.ProcessEnv = {
+      HOME: '/tmp/flowa-fake-home',
+      FLOWA_E2E_STATUS: '/tmp/flowa/status-positive.txt',
+      FLOWA_UPDATE_FEED: 'http://127.0.0.1:9/feed',
+      FLOWA_UPDATE_PUBLIC_KEY: PEM,
+      FLOWA_E2E_AUTO_UPDATE: '1',
+      FLOWA_E2E_NO_SANDBOX: '1'
+    }
+    let stored = ''
+    const written = restoreE2ESession({
+      e2e: true,
+      env: first,
+      platform: 'darwin',
+      loginHome: '/Users/max',
+      readText: () =>
+        JSON.stringify({
+          statusFile: '/tmp/flowa/status-old.txt',
+          feedUrl: 'http://127.0.0.1:1/',
+          publicKey: PEM,
+          autoUpdate: true,
+          noSandbox: true
+        }),
+      writeText: (_file, text) => {
+        stored = text
+      }
+    })
+    expect(written.persisted).toBe(true)
+    expect(written.path).toBe('/Users/max/Library/Application Support/Flowa-Electron-e2e/e2e.json')
+    expect(JSON.parse(stored).statusFile).toBe('/tmp/flowa/status-positive.txt')
+    expect(JSON.parse(stored).feedUrl).toBe('http://127.0.0.1:9/feed/')
+
+    const relaunch: NodeJS.ProcessEnv = {}
+    const restored = restoreE2ESession({
+      e2e: true,
+      env: relaunch,
+      platform: 'darwin',
+      loginHome: '/Users/max',
+      readText: () => stored,
+      writeText: () => {
+        throw new Error('a boot with no rehearsal env must not rewrite e2e.json')
+      }
+    })
+    expect(restored.persisted).toBe(false)
+    expect(relaunch.FLOWA_E2E_STATUS).toBe('/tmp/flowa/status-positive.txt')
+    expect(relaunch.FLOWA_UPDATE_FEED).toBe('http://127.0.0.1:9/feed/')
+    expect(relaunch.FLOWA_UPDATE_PUBLIC_KEY).toBe(PEM)
+    expect(relaunch.FLOWA_E2E_AUTO_UPDATE).toBe('1')
+    expect(relaunch.FLOWA_E2E_NO_SANDBOX).toBe('1')
+  })
+
+  it('drops a non-local feed and a relative status path', () => {
+    const env: NodeJS.ProcessEnv = {
+      FLOWA_UPDATE_FEED: 'https://github.com/maxkongerskov/flowa-electron/',
+      FLOWA_E2E_STATUS: 'status.txt',
+      FLOWA_UPDATE_PUBLIC_KEY: 'not a key'
+    }
+    let stored = ''
+    const result = restoreE2ESession({
+      e2e: true,
+      env,
+      platform: 'linux',
+      loginHome: '/home/max',
+      readText: () => null,
+      writeText: (_file, text) => {
+        stored = text
+      }
+    })
+    expect(result.persisted).toBe(false)
+    expect(stored).toBe('')
+    expect(env.FLOWA_UPDATE_FEED).toBe('https://github.com/maxkongerskov/flowa-electron/')
+    expect(parseE2ESession('not json', 'darwin')).toBeNull()
+  })
+
+  it('round-trips the session file', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'flowa-e2e-session-'))
+    const file = path.join(dir, 'e2e.json')
+    writeE2ESessionFile(file, `${JSON.stringify({ statusFile: '/tmp/status.txt', feedUrl: 'http://127.0.0.1:9/', publicKey: PEM, autoUpdate: true, noSandbox: true })}\n`)
+    expect(parseE2ESession(readFileSync(file, 'utf8'), 'linux')).toMatchObject({
+      statusFile: '/tmp/status.txt',
+      feedUrl: 'http://127.0.0.1:9/',
+      autoUpdate: true,
+      noSandbox: true
+    })
+  })
+
+  it('names only the e2e ShipIt job', () => {
+    const plan = shipItCleanupPlan('/Users/max', 501)
+    expect(plan.label).toBe('com.maxkongerskov.FlowaElectron.e2e.ShipIt')
+    expect(plan.label).not.toBe('com.maxkongerskov.FlowaElectron.ShipIt')
+    expect(plan.plist).toBe('/Users/max/Library/LaunchAgents/com.maxkongerskov.FlowaElectron.e2e.ShipIt.plist')
+    expect(plan.cacheDir).toBe('/Users/max/Library/Caches/com.maxkongerskov.FlowaElectron.e2e.ShipIt')
+    expect(plan.bootout).toEqual(['launchctl', 'bootout', 'gui/501/com.maxkongerskov.FlowaElectron.e2e.ShipIt'])
+    expect(plan.remove).toEqual(['launchctl', 'remove', 'com.maxkongerskov.FlowaElectron.e2e.ShipIt'])
+  })
+
+  it('loads the session before the sandbox switch, and only in an e2e build', () => {
+    const index = readFileSync(path.resolve('src/main/index.ts'), 'utf8')
+    const session = readFileSync(path.resolve('src/main/e2eSession.ts'), 'utf8')
+    const block = index.slice(index.indexOf('if (isE2EBuild())'), index.indexOf('app.setName'))
+    expect(block).toContain('installE2ESession()')
+    expect(block.indexOf('installE2ESession()')).toBeLessThan(block.indexOf("appendSwitch('no-sandbox')"))
+    expect(index.indexOf('installE2ESession()')).toBeLessThan(index.indexOf('skipSingleInstance'))
+    expect(session).toContain('if (!isE2EBuild()) return')
+    expect(session).toContain('os.userInfo().homedir')
+    expect(session).not.toContain('process.env.HOME')
+    expect(session).not.toContain('getPath(')
   })
 })

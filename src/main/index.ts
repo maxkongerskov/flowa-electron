@@ -24,10 +24,12 @@ import { openKeyboardSettings } from './permissions'
 import { runSelfTest } from './selftest'
 import { isE2EBuild } from '@shared/updateTrust'
 import { E2E_BUNDLE_ID, RELEASE_BUNDLE_ID, isQuittingForUpdate, markQuittingForUpdate, shouldKeepWindowOpen } from '../../scripts/update-install.mjs'
+import { installE2ESession } from './e2eSession'
 import { noteE2E, UpdateChecker } from './updates'
 
 configureUserDataPath()
 if (isE2EBuild()) {
+  installE2ESession()
   app.disableHardwareAcceleration()
   if (process.env.FLOWA_E2E_NO_SANDBOX === '1') {
     app.commandLine.appendSwitch('no-sandbox')

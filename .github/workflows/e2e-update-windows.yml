@@ -1,7 +1,9 @@
-# No secrets. Builds two slim NSIS installers (no Whisper weights), serves the
-# newer one on localhost, and requires that 9.9.0 quits within 20s of
-# "installing" and that 9.9.1 starts on its own. Release builds are still
-# produced on the Mac with scripts/release.sh.
+# No secrets. Builds two slim assisted NSIS installers (no Whisper weights),
+# installs 9.9.0 per-user with /S /currentuser, serves 9.9.1 on localhost, and
+# requires that 9.9.0 quits within 20s of "installing" and that 9.9.1 starts
+# on its own. NSIS relaunches without the test environment; the e2e build
+# restores it from %APPDATA%\Flowa-Electron-e2e\e2e.json. Release builds are
+# still produced on the Mac with scripts/release.sh.
 name: Windows update rehearsal
 
 on:
