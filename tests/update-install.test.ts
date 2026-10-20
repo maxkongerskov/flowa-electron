@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it, afterEach } from 'vitest'
-import { executableName } from '../scripts/e2e-update.mjs'
+import { cliInvocation } from '../scripts/e2e-update.mjs'
 import {
   E2E_BUNDLE_ID,
   E2E_PRODUCT_NAME,
@@ -108,11 +108,24 @@ describe('install quit deadline', () => {
 })
 
 describe('windows rehearsal command', () => {
-  it('spawns npx.cmd so the Windows runner can start the packages', () => {
-    expect(executableName('npx', 'win32')).toBe('npx.cmd')
-    expect(executableName('npm', 'win32')).toBe('npm.cmd')
-    expect(executableName('npx', 'linux')).toBe('npx')
-    expect(executableName('bash', 'win32')).toBe('bash')
+  it('starts the package CLIs with node so Windows never spawns a .cmd', () => {
+    const modules = path.join('C:\\repo', 'node_modules')
+    const vite = cliInvocation('electron-vite', ['build'], 'C:\\Program Files\\nodejs\\node.exe', modules)
+    const builder = cliInvocation('electron-builder', ['--win', 'nsis'], 'C:\\Program Files\\nodejs\\node.exe', modules)
+    expect(vite.command).toBe('C:\\Program Files\\nodejs\\node.exe')
+    expect(builder.command).toBe(vite.command)
+    expect(vite.args[0]).toBe(path.join(modules, 'electron-vite', 'bin', 'electron-vite.js'))
+    expect(vite.args.slice(1)).toEqual(['build'])
+    expect(builder.args[0]).toBe(path.join(modules, 'electron-builder', 'cli.js'))
+    expect(builder.args.slice(1)).toEqual(['--win', 'nsis'])
+    for (const invoked of [vite, builder]) {
+      expect(invoked.command.endsWith('.cmd')).toBe(false)
+      expect(invoked.args.some((arg) => arg.endsWith('.cmd'))).toBe(false)
+    }
+    expect(() => cliInvocation('npx', [])).toThrow(/unknown cli/)
+    const script = readFileSync(path.resolve('scripts/e2e-update.mjs'), 'utf8')
+    expect(script).not.toContain('npx.cmd')
+    expect(script).toContain('runNodeCli')
   })
 })
 

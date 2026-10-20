@@ -1,4 +1,9 @@
-export function executableName(cmd: string, platform?: NodeJS.Platform): string
+export function cliInvocation(
+  name: string,
+  args: string[],
+  nodePath?: string,
+  modulesDir?: string
+): { command: string; args: string[] }
 export function macFeedOptions(
   arch: 'arm64' | 'x64',
   privateKeyPem: string

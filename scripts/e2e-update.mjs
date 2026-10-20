@@ -37,18 +37,35 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const FROM = '9.9.0'
 const TO = '9.9.1'
 
-export function executableName(cmd, platform = process.platform) {
-  if (platform === 'win32' && (cmd === 'npx' || cmd === 'npm')) return `${cmd}.cmd`
-  return cmd
+const NODE_CLIS = {
+  'electron-vite': path.join('electron-vite', 'bin', 'electron-vite.js'),
+  'electron-builder': path.join('electron-builder', 'cli.js')
+}
+
+// Windows throws EINVAL when spawn() is given a cmd shim without a shell.
+// Both CLIs are plain JavaScript, so every platform starts them with node.
+export function cliInvocation(name, args, nodePath = process.execPath, modulesDir = path.join(root, 'node_modules')) {
+  const relative = NODE_CLIS[name]
+  if (!relative) throw new Error(`unknown cli ${name}`)
+  return { command: nodePath, args: [path.join(modulesDir, relative), ...args] }
 }
 
 function run(cmd, args, env = process.env) {
+  return spawnAndWait(cmd, args, env, `${cmd} ${args.join(' ')}`)
+}
+
+function runNodeCli(name, args, env = process.env) {
+  const invoked = cliInvocation(name, args)
+  return spawnAndWait(invoked.command, invoked.args, env, `${name} ${args.join(' ')}`)
+}
+
+function spawnAndWait(cmd, args, env, label) {
   return new Promise((resolve, reject) => {
-    const child = spawn(executableName(cmd), args, { cwd: root, env, stdio: 'inherit' })
+    const child = spawn(cmd, args, { cwd: root, env, stdio: 'inherit' })
     child.on('error', reject)
     child.on('exit', (code) => {
       if (code === 0) resolve()
-      else reject(new Error(`${cmd} ${args.join(' ')} exited ${code}`))
+      else reject(new Error(`${label} exited ${code}`))
     })
   })
 }
@@ -148,13 +165,12 @@ function killPid(pid) {
 }
 
 async function buildVite() {
-  await run('npx', ['--no-install', 'electron-vite', 'build'], { ...process.env, FLOWA_E2E_UPDATES: '1' })
+  await runNodeCli('electron-vite', ['build'], { ...process.env, FLOWA_E2E_UPDATES: '1' })
 }
 
 async function buildPackage(version, outDir, args) {
   rmSync(outDir, { recursive: true, force: true })
-  await run('npx', [
-    '--no-install', 'electron-builder',
+  await runNodeCli('electron-builder', [
     '--config', 'electron-builder.e2e.cjs',
     `--config.directories.output=${outDir}`,
     `--config.extraMetadata.version=${version}`,
@@ -315,6 +331,9 @@ async function linuxDeb(work, publicKey, privateKey) {
   await writeUpdateFeeds(feed, TO, { privateKeyPem: privateKey, blockMaps: false, releaseDate: '2026-10-20T00:00:00.000Z' })
   const { server, url } = await serve(feed)
   try {
+    // A previous rehearsal leaves flowa-e2e 9.9.1 installed. apt refuses to
+    // replace it with 9.9.0 unless that package is removed first.
+    spawnSync('sudo', ['-n', 'apt-get', 'remove', '-y', 'flowa-e2e'], { stdio: 'inherit' })
     const installed = spawnSync('sudo', ['-n', 'apt-get', 'install', '-y', fromDeb], { stdio: 'inherit' })
     if (installed.status !== 0) {
       console.log('Deb update test skipped: apt could not install the package.')
