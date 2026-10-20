@@ -160,8 +160,11 @@ bash scripts/build-release.sh
 
 `npm run release` does not push a tag before the build. If a build fails, fix it and run the
 same version again. The packaged rehearsal on this Mac is `bash scripts/e2e-update-mac.sh`
-(Developer ID, no notarization, slim app without the Whisper weights). It installs
-9.9.1 from that arch's zip, then rejects a tampered zip and stays on 9.9.0.
+(Developer ID, no notarization, slim app without the Whisper weights). It tests
+the arm64 zip and the x64 zip. Each one must quit within 20 seconds of
+`installing`, start 9.9.1 on its own, then reject a tampered zip and stay on
+9.9.0. The rehearsal bundle id is `com.maxkongerskov.FlowaElectron.e2e`, so it
+does not share ShipIt's cache with an installed Flowa.
 Linux is
 `node scripts/e2e-update.mjs`. Windows is the optional Actions workflow
 `.github/workflows/e2e-update-windows.yml` (no secrets).

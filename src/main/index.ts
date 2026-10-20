@@ -1,7 +1,7 @@
 // Flowa — Electron main process. Port of FlowaApp.swift (app root, window,
 // menu bar extra, app delegate) wiring the ported services together.
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, session, clipboard } from 'electron'
+import { app, autoUpdater, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, session, clipboard } from 'electron'
 import type { AppState } from '@shared/types'
 import { PrefKey, normalizedMicrophoneUID, sanitizedMaxDurationMinutes, type Prefs } from '@shared/prefs'
 import { defaultShortcut, needsInputMonitoring, shortcutKind, shortcutLabel, validateShortcut } from '@shared/shortcut'
@@ -23,6 +23,7 @@ import { runRepair } from './repair'
 import { openKeyboardSettings } from './permissions'
 import { runSelfTest } from './selftest'
 import { isE2EBuild } from '@shared/updateTrust'
+import { E2E_BUNDLE_ID, RELEASE_BUNDLE_ID, isQuittingForUpdate, markQuittingForUpdate, shouldKeepWindowOpen } from '../../scripts/update-install.mjs'
 import { noteE2E, UpdateChecker } from './updates'
 
 configureUserDataPath()
@@ -33,8 +34,8 @@ if (isE2EBuild()) {
     app.commandLine.appendSwitch('disable-setuid-sandbox')
   }
 }
-app.setName('Flowa')
-if (process.platform === 'win32') app.setAppUserModelId('com.maxkongerskov.FlowaElectron')
+app.setName(isE2EBuild() ? 'FlowaE2E' : 'Flowa')
+if (process.platform === 'win32') app.setAppUserModelId(isE2EBuild() ? E2E_BUNDLE_ID : RELEASE_BUNDLE_ID)
 
 // The packaged update test restarts a second copy before the first has quit.
 // Production builds still take the lock.
@@ -77,7 +78,9 @@ async function main(): Promise<void> {
       mainWindow = createMainWindow(prefs.get(PrefKey.colorSchemeDark))
       mainWindow.on('close', (e) => {
         // applicationShouldTerminateAfterLastWindowClosed → false: keep running for the hotkey + tray.
-        if (!quitting) {
+        // An update sets the quit flag before quitAndInstall, because Squirrel closes
+        // windows before `before-quit`. Hiding the window here cancels that quit.
+        if (shouldKeepWindowOpen(quitting, isQuittingForUpdate())) {
           e.preventDefault()
           mainWindow?.hide()
         }
@@ -459,6 +462,14 @@ async function main(): Promise<void> {
   app.on('window-all-closed', () => {
     /* keep running in the tray */
   })
+  const beginQuit = (): void => {
+    quitting = true
+    markQuittingForUpdate()
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.removeAllListeners('close')
+    }
+  }
+  autoUpdater.on('before-quit-for-update', beginQuit)
   app.on('before-quit', () => {
     quitting = true
   })

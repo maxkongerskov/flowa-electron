@@ -1,6 +1,8 @@
 import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
+import { isE2EBuild } from '@shared/updateTrust'
+import { userDataFolderName } from '../../scripts/update-install.mjs'
 
 /**
  * Where Flowa-Electron keeps its data. Deliberately NOT the Swift app's
@@ -9,7 +11,7 @@ import path from 'node:path'
  * Support/Flowa/recent.json; we use the same file name in our own folder.)
  */
 export function configureUserDataPath(): void {
-  app.setPath('userData', path.join(app.getPath('appData'), 'Flowa-Electron'))
+  app.setPath('userData', path.join(app.getPath('appData'), userDataFolderName(isE2EBuild())))
 }
 
 export const paths = {

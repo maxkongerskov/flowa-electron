@@ -3,9 +3,9 @@
 // bundle the Whisper models. This config exists so the update test can package
 // a real app without downloading 1.6 GB of weights.
 module.exports = {
-  appId: 'com.maxkongerskov.FlowaElectron',
-  productName: 'Flowa',
-  executableName: 'Flowa',
+  appId: 'com.maxkongerskov.FlowaElectron.e2e',
+  productName: 'FlowaE2E',
+  executableName: 'FlowaE2E',
   copyright: 'Copyright © 2026 Max Køngerskov',
   directories: { buildResources: 'build' },
   files: ['out/**', 'package.json'],
@@ -41,5 +41,5 @@ module.exports = {
     artifactName: 'Flowa-${version}.${ext}',
     synopsis: 'Local voice dictation'
   },
-  deb: { artifactName: 'flowa_${version}_amd64.${ext}' }
+  deb: { artifactName: 'flowa_${version}_amd64.${ext}', packageName: 'flowa-e2e' }
 }

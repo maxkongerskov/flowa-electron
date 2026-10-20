@@ -23,6 +23,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { generateUpdateKeyPair, sha256File, signSha256 } from './update-trust.mjs'
 import { writeUpdateFeeds } from './update-feed.mjs'
 import { writeAppUpdateYml } from './app-update-yml.mjs'
+import {
+  E2E_PRODUCT_NAME,
+  installQuitFailure,
+  installRelaunchReady,
+  installRelaunchTimeoutMessage,
+  noteInstalling
+} from './update-install.mjs'
 
 const require = createRequire(import.meta.url)
 const yaml = require('js-yaml')
@@ -95,6 +102,42 @@ function pidsIn(text) {
   return [...text.matchAll(/pid=(\d+)/g)].map((match) => Number(match[1]))
 }
 
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function waitForPositiveUpdate(file, timeoutMs) {
+  const started = Date.now()
+  let watch = { installingAt: null, fromPid: null }
+  return new Promise((resolve, reject) => {
+    const timer = setInterval(() => {
+      const text = existsSync(file) ? readFileSync(file, 'utf8') : ''
+      const now = Date.now()
+      watch = noteInstalling(text, FROM, TO, now, watch)
+      const failure = installQuitFailure({ text, to: TO, now, watch, pidAlive })
+      if (failure) {
+        clearInterval(timer)
+        reject(new Error(failure))
+        return
+      }
+      if (installRelaunchReady(text, FROM, TO, watch.fromPid, pidAlive)) {
+        clearInterval(timer)
+        resolve(text)
+        return
+      }
+      if (now - started > timeoutMs) {
+        clearInterval(timer)
+        reject(new Error(`${installRelaunchTimeoutMessage(text, TO, watch.fromPid, pidAlive)}\n${text || '(no status file)'}`))
+      }
+    }, 500)
+  })
+}
+
 function killPid(pid) {
   try { process.kill(pid, 'SIGTERM') } catch { /* already gone */ }
 }
@@ -110,6 +153,7 @@ async function buildPackage(version, outDir, args) {
     '--config', 'electron-builder.e2e.cjs',
     `--config.directories.output=${outDir}`,
     `--config.extraMetadata.version=${version}`,
+    '--config.extraMetadata.name=flowa-e2e',
     '--publish', 'never',
     ...args
   ])
@@ -154,8 +198,9 @@ async function launchAndWait(command, args, env, statusFile, predicate, timeoutM
   const log = require('node:fs').createWriteStream(logFile, { flags: 'a' })
   child.stdout?.pipe(log)
   child.stderr?.pipe(log)
+  const wait = predicate === 'positive' ? waitForPositiveUpdate(statusFile, timeoutMs) : waitForStatus(statusFile, predicate, timeoutMs)
   try {
-    const text = await waitForStatus(statusFile, predicate, timeoutMs)
+    const text = await wait
     return { text, child }
   } catch (err) {
     const tail = existsSync(logFile) ? readFileSync(logFile, 'utf8').slice(-4000) : ''
@@ -225,10 +270,9 @@ async function linuxAppImage(work, publicKey, privateKey) {
   }
 
   try {
-    const positive = await launch('positive', pristine, (text) => text.includes(`booted ${FROM}`) && text.includes(`booted ${TO}`), 180_000)
+    const positive = await launch('positive', pristine, 'positive', 180_000)
     console.log('--- positive status ---')
     console.log(positive.trim())
-    if (!positive.includes(`installing ${TO}`)) throw new Error('update did not reach quitAndInstall')
 
     const negativeImage = path.join(work, 'Flowa-negative.AppImage')
     copyFileSync(fromImage, negativeImage)
@@ -271,7 +315,7 @@ async function linuxDeb(work, publicKey, privateKey) {
       console.log('Deb update test skipped: apt could not install the package.')
       return
     }
-    const exe = '/opt/Flowa/Flowa'
+    const exe = `/opt/${E2E_PRODUCT_NAME}/${E2E_PRODUCT_NAME}`
     if (!existsSync(exe)) {
       console.log(`Deb update test skipped: ${exe} was not installed.`)
       return
@@ -286,7 +330,7 @@ async function linuxDeb(work, publicKey, privateKey) {
     env.DISPLAY = xvfb.display
     let result
     try {
-      result = await launchAndWait(exe, ['--no-sandbox'], env, status, (text) => text.includes(`booted ${FROM}`) && text.includes(`booted ${TO}`), 180_000, log)
+      result = await launchAndWait(exe, ['--no-sandbox'], env, status, 'positive', 180_000, log)
     } finally {
       xvfb.child.kill('SIGTERM')
     }
@@ -294,7 +338,7 @@ async function linuxDeb(work, publicKey, privateKey) {
     console.log(result.text.trim())
     for (const pid of pidsIn(result.text)) killPid(pid)
     try { process.kill(-result.child.pid, 'SIGTERM') } catch { /* already gone */ }
-    console.log('✓ deb updated 9.9.0 → 9.9.1')
+    console.log('✓ deb updated 9.9.0 → 9.9.1 and the new version started on its own')
   } finally {
     server.close()
   }
@@ -325,13 +369,13 @@ export function assertMacRehearsal(positive, negative, from = FROM, to = TO) {
   if (errors.length > 0) throw new Error(errors.join('\n'))
 }
 
-async function mac(work, publicKey, privateKey) {
+async function mac(work, publicKey, privateKey, arch) {
+  if (arch !== 'arm64' && arch !== 'x64') throw new Error(`unsupported mac arch ${arch}`)
   if (process.env.FLOWA_E2E_ALLOW_UNSIGNED === '1') {
     throw new Error('The Mac update test uses Developer ID. Unset FLOWA_E2E_ALLOW_UNSIGNED.')
   }
   const signId = process.env.FLOWA_SIGN_ID
   if (!signId) throw new Error('Set FLOWA_SIGN_ID to the Developer ID Application identity.')
-  const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
   const archFlag = arch === 'arm64' ? '--arm64' : '--x64'
   if (!existsSync(path.join(root, 'build', 'icon.icns'))) {
     await run('bash', ['scripts/build-mac-icons.sh'])
@@ -339,7 +383,7 @@ async function mac(work, publicKey, privateKey) {
   console.log(`▶ macOS ${arch} packages`)
   await buildPackage(FROM, path.join(work, 'from'), ['--mac', 'dir', archFlag])
   await buildPackage(TO, path.join(work, 'to'), ['--mac', 'dir', archFlag])
-  const appFor = (dir) => path.join(dir, arch === 'arm64' ? 'mac-arm64' : 'mac', 'Flowa.app')
+  const appFor = (dir) => path.join(dir, arch === 'arm64' ? 'mac-arm64' : 'mac', `${E2E_PRODUCT_NAME}.app`)
   const fromApp = appFor(path.join(work, 'from'))
   const toApp = appFor(path.join(work, 'to'))
   writeAppUpdateYml(path.join(fromApp, 'Contents', 'Resources'))
@@ -355,7 +399,7 @@ async function mac(work, publicKey, privateKey) {
   await writeUpdateFeeds(feed, TO, macFeedOptions(arch, privateKey))
   // quitAndInstall replaces the running bundle. Keep a signed copy of N, and
   // give the tamper run its own HOME so it cannot reuse the good download.
-  const stayApp = path.join(work, 'stay', 'Flowa.app')
+  const stayApp = path.join(work, 'stay', `${E2E_PRODUCT_NAME}.app`)
   require('node:fs').mkdirSync(path.dirname(stayApp))
   await run('ditto', [fromApp, stayApp])
   const { server, url } = await serve(feed)
@@ -366,7 +410,7 @@ async function mac(work, publicKey, privateKey) {
     require('node:fs').mkdirSync(home, { recursive: true })
     console.log(`▶ launch ${label}`)
     const env = appEnv(process.env, url, publicKey, status, home)
-    const bin = path.join(appPath, 'Contents', 'MacOS', 'Flowa')
+    const bin = path.join(appPath, 'Contents', 'MacOS', E2E_PRODUCT_NAME)
     const result = await launchAndWait(bin, ['--no-sandbox'], env, status, predicate, 180_000, log)
     for (const pid of pidsIn(result.text)) killPid(pid)
     await new Promise((resolve) => setTimeout(resolve, 500))
@@ -377,7 +421,7 @@ async function mac(work, publicKey, privateKey) {
     return result.text
   }
   try {
-    const positive = await launch('positive', fromApp, (text) => text.includes(`booted ${FROM}`) && text.includes(`booted ${TO}`))
+    const positive = await launch('positive', fromApp, 'positive')
     console.log('--- positive status ---')
     console.log(positive.trim())
     flipLastByte(zip)
@@ -386,7 +430,7 @@ async function mac(work, publicKey, privateKey) {
     console.log('--- negative status ---')
     console.log(negative.trim())
     assertMacRehearsal(positive, negative)
-    console.log('✓ Mac app updated 9.9.0 → 9.9.1 and rejected a tampered zip')
+    console.log(`✓ Mac ${arch} zip updated 9.9.0 → 9.9.1, quit, relaunched, and rejected a tampered zip`)
   } finally {
     server.close()
   }
@@ -406,7 +450,7 @@ async function windows(work, publicKey, privateKey) {
   try {
     const installed = spawnSync(fromExe, ['/S'], { stdio: 'inherit' })
     if (installed.status !== 0) throw new Error(`NSIS install exited ${installed.status}`)
-    const exe = path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Flowa', 'Flowa.exe')
+    const exe = path.join(process.env.LOCALAPPDATA ?? '', 'Programs', E2E_PRODUCT_NAME, `${E2E_PRODUCT_NAME}.exe`)
     const started = Date.now()
     while (!existsSync(exe)) {
       if (Date.now() - started > 60_000) throw new Error(`installer did not produce ${exe}`)
@@ -417,10 +461,10 @@ async function windows(work, publicKey, privateKey) {
     const log = path.join(work, 'log-win.txt')
     require('node:fs').mkdirSync(home, { recursive: true })
     const env = appEnv(process.env, url, publicKey, status, home)
-    const result = await launchAndWait(exe, ['--no-sandbox'], env, status, (text) => text.includes(`booted ${FROM}`) && text.includes(`booted ${TO}`), 180_000, log)
+    const result = await launchAndWait(exe, ['--no-sandbox'], env, status, 'positive', 180_000, log)
     console.log(result.text.trim())
     for (const pid of pidsIn(result.text)) killPid(pid)
-    console.log('✓ Windows app updated 9.9.0 → 9.9.1')
+    console.log('✓ Windows NSIS updated 9.9.0 → 9.9.1, quit, and the new version started on its own')
   } finally {
     server.close()
   }
@@ -438,7 +482,9 @@ async function main() {
     if (process.env.FLOWA_E2E_SKIP_DEB === '1') console.log('Deb update test skipped (FLOWA_E2E_SKIP_DEB=1).')
     else await linuxDeb(work, pair.publicKey, pair.privateKey)
   } else if (process.platform === 'darwin') {
-    await mac(work, pair.publicKey, pair.privateKey)
+    const arches = (process.env.FLOWA_E2E_MAC_ARCHES ?? 'arm64,x64').split(',').map((item) => item.trim()).filter(Boolean)
+    if (arches.length === 0) throw new Error('FLOWA_E2E_MAC_ARCHES did not name an architecture')
+    for (const arch of arches) await mac(path.join(work, arch), pair.publicKey, pair.privateKey, arch)
   } else if (process.platform === 'win32') {
     await windows(work, pair.publicKey, pair.privateKey)
   } else {

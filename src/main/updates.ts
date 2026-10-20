@@ -32,6 +32,7 @@ import {
   updatePublicKey,
   updateSignatureDecision
 } from '@shared/updateTrust'
+import { isQuittingForUpdate, markQuittingForUpdate, quitAndRelaunch } from '../../scripts/update-install.mjs'
 
 type UpdaterModule = { autoUpdater: AppUpdater }
 
@@ -181,9 +182,18 @@ export class UpdateChecker {
     this.onChange()
     noteE2E(`installing ${next.version}`)
     try {
-      // Silent NSIS (/S) plus relaunch. MacUpdater ignores the flags and uses
-      // autoRunAppAfterInstall, which was set before the download finished.
-      this.updater?.quitAndInstall(true, true)
+      const updater = this.updater
+      if (!updater) throw new Error('updater is not ready')
+      // Flag first. Mac closes windows before `before-quit`, and ShipIt only
+      // relaunches when autoRunAppAfterInstall sends it through native quitAndInstall.
+      quitAndRelaunch({
+        setQuitting: markQuittingForUpdate,
+        isQuitting: isQuittingForUpdate,
+        setAutoRunAfterInstall: (value) => {
+          updater.autoRunAppAfterInstall = value
+        },
+        quitAndInstall: (isSilent, isForceRunAfter) => updater.quitAndInstall(isSilent, isForceRunAfter)
+      })
     } catch (err) {
       console.warn('[Flowa] quitAndInstall failed:', err instanceof Error ? err.message : err)
       this.failDownload(DOWNLOAD_FAILED)
