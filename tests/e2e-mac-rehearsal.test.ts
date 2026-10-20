@@ -4,12 +4,45 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { assertMacRehearsal, macFeedOptions, rewriteChecksumKeepSignature } from '../scripts/e2e-update.mjs'
+import { assertMacRehearsal, assertTamperRehearsal, macFeedOptions, removeTreeRetrying, rewriteChecksumKeepSignature } from '../scripts/e2e-update.mjs'
 import { generateUpdateKeyPair, sha256File, verifySha256 } from '../scripts/update-trust.mjs'
 import { verifyUpdateFeeds, writeUpdateFeeds } from '../scripts/update-feed.mjs'
 
 const require = createRequire(import.meta.url)
 const yaml = require('js-yaml')
+
+describe('ShipIt cache cleanup', () => {
+  it('retries a directory that is still being written and does not throw', async () => {
+    let calls = 0
+    const removed = await removeTreeRetrying('/tmp/flowa-shipit', {
+      attempts: 3,
+      delayMs: 0,
+      wait: async () => {},
+      exists: () => calls < 3,
+      remove: () => {
+        calls += 1
+        if (calls < 3) {
+          const err = new Error('ENOTEMPTY') as NodeJS.ErrnoException
+          err.code = 'ENOTEMPTY'
+          throw err
+        }
+      }
+    })
+    expect(removed).toBe(true)
+    expect(calls).toBe(3)
+    await expect(
+      removeTreeRetrying('/tmp/flowa-shipit', {
+        attempts: 2,
+        delayMs: 0,
+        wait: async () => {},
+        exists: () => true,
+        remove: () => {
+          throw new Error('ENOTEMPTY')
+        }
+      })
+    ).resolves.toBe(false)
+  })
+})
 
 describe('Mac update rehearsal', () => {
   it('accepts a one-arch zip and still signs it', async () => {
@@ -63,6 +96,9 @@ describe('Mac update rehearsal', () => {
     expect(() => assertMacRehearsal(positive, '')).toThrow(/not rejected/)
     expect(() => assertMacRehearsal('booted 9.9.0 pid=1\n', negative)).toThrow(/did not install/)
     expect(() => assertMacRehearsal(positive, 'booted 9.9.0 pid=3\nrejected\nbooted 9.9.1 pid=4\n')).toThrow(/was installed/)
+    expect(() => assertTamperRehearsal(positive, '', 'Windows')).toThrow(/tampered Windows update was not rejected/)
+    expect(() => assertTamperRehearsal(positive, negative, 'Windows')).not.toThrow()
+    expect(() => assertTamperRehearsal(positive, negative, 'deb')).not.toThrow()
   })
 
   it('wires the Mac script so the success line follows both launches', () => {
@@ -78,6 +114,18 @@ describe('Mac update rehearsal', () => {
     expect(macFn).toContain('finishLaunch')
     expect(src).toContain('shipItCleanupPlan')
     expect(src).toContain("FLOWA_E2E_MAC_ARCHES ?? 'arm64,x64'")
+    const cleanup = src.slice(src.indexOf('export async function cleanupE2ERehearsal'), src.indexOf('async function finishLaunch'))
+    expect(cleanup.indexOf('killNamed')).toBeGreaterThan(-1)
+    expect(cleanup.indexOf('killNamed')).toBeLessThan(cleanup.indexOf('plan.bootout'))
+    expect(cleanup.indexOf('plan.bootout')).toBeLessThan(cleanup.indexOf('removeTreeRetrying'))
+    expect(cleanup).not.toContain('rmSync(plan.cacheDir')
+    const winFn = src.slice(src.indexOf('async function windows('), src.indexOf('async function main('))
+    const debFn = src.slice(src.indexOf('async function linuxDeb('), src.indexOf('export function macFeedOptions'))
+    for (const fn of [winFn, debFn]) {
+      expect(fn).toContain('flipLastByte')
+      expect(fn).toContain('assertTamperRehearsal')
+      expect(fn.indexOf("'negative'")).toBeGreaterThan(fn.indexOf("'positive'"))
+    }
     const release = readFileSync(path.resolve('scripts/build-release.sh'), 'utf8')
     const publish = readFileSync(path.resolve('scripts/publish-release.sh'), 'utf8')
     const feed = readFileSync(path.resolve('scripts/update-feed.mjs'), 'utf8')

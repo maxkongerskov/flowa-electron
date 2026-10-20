@@ -174,24 +174,82 @@ function killNamed(name, force) {
   spawnSync('pkill', [force ? '-KILL' : '-TERM', '-x', name], { stdio: 'ignore' })
 }
 
+function killMatching(fragment) {
+  const listed = spawnSync('pgrep', ['-f', fragment], { encoding: 'utf8' })
+  const pids = String(listed.stdout ?? '')
+    .split(/\s+/)
+    .map((item) => Number(item))
+    .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid)
+  for (const pid of pids) {
+    try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ }
+  }
+}
+
+async function waitForPidsToExit(pids, timeoutMs) {
+  const started = Date.now()
+  while (pids.some((pid) => pidAlive(pid))) {
+    if (Date.now() - started >= timeoutMs) return false
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  return true
+}
+
+/**
+ * Deletes a tree that ShipIt may still be filling. A file that appears
+ * mid-walk makes Node's rm throw ENOTEMPTY; that must not abort the next
+ * arch or the tamper case. Returns false when the path is still there.
+ */
+export async function removeTreeRetrying(target, options = {}) {
+  const attempts = options.attempts ?? 8
+  const delayMs = options.delayMs ?? 250
+  const wait = options.wait ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
+  const exists = options.exists ?? ((dir) => existsSync(dir))
+  const remove = options.remove ?? ((dir) => {
+    if (process.platform === 'darwin') {
+      const result = spawnSync('/bin/rm', ['-rf', dir], { stdio: 'ignore' })
+      if (result.status !== 0 && exists(dir)) throw new Error(`rm -rf exited ${result.status}`)
+      return
+    }
+    rmSync(dir, { recursive: true, force: true })
+  })
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      remove(target)
+    } catch {
+      /* The directory can gain a file while it is being removed. */
+    }
+    if (!exists(target)) return true
+    if (attempt < attempts - 1) await wait(delayMs)
+  }
+  return !exists(target)
+}
+
 /** The relaunched app is not a child of the rehearsal. Stop it, then drop the e2e ShipIt job and e2e.json. */
 export async function cleanupE2ERehearsal(statusText = '') {
   const home = os.userInfo().homedir
+  const pids = pidsIn(statusText)
+  for (const pid of pids) killPid(pid)
+  killNamed(E2E_PRODUCT_NAME, false)
+  await waitForPidsToExit(pids, 5_000)
+  for (const pid of pids) {
+    try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ }
+  }
+  killNamed(E2E_PRODUCT_NAME, true)
+  await waitForPidsToExit(pids, 2_000)
   if (process.platform === 'darwin') {
     const plan = shipItCleanupPlan(home, typeof process.getuid === 'function' ? process.getuid() : 0)
     spawnSync(plan.bootout[0], plan.bootout.slice(1), { stdio: 'ignore' })
     spawnSync(plan.remove[0], plan.remove.slice(1), { stdio: 'ignore' })
+    killMatching(plan.cacheDir)
     rmSync(plan.plist, { force: true })
-    rmSync(plan.cacheDir, { recursive: true, force: true })
+    const removed = await removeTreeRetrying(plan.cacheDir)
+    if (!removed) console.warn(`ShipIt cache still present at ${plan.cacheDir}`)
   }
-  for (const pid of pidsIn(statusText)) killPid(pid)
-  killNamed(E2E_PRODUCT_NAME, false)
-  await new Promise((resolve) => setTimeout(resolve, 500))
-  for (const pid of pidsIn(statusText)) {
-    try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ }
+  try {
+    rmSync(e2eSessionPath(process.platform, home, process.env), { force: true })
+  } catch (err) {
+    console.warn(`e2e session file was not removed: ${err instanceof Error ? err.message : err}`)
   }
-  killNamed(E2E_PRODUCT_NAME, true)
-  rmSync(e2eSessionPath(process.platform, home, process.env), { force: true })
 }
 
 async function finishLaunch(pending) {
@@ -352,7 +410,7 @@ async function linuxAppImage(work, publicKey, privateKey) {
     const negative = await launch('negative', negativeImage, (text) => text.includes(`booted ${FROM}`) && text.includes('rejected'), 180_000)
     console.log('--- negative status ---')
     console.log(negative.trim())
-    if (negative.includes(`booted ${TO}`)) throw new Error('tampered update was installed')
+    assertTamperRehearsal(positive, negative, 'AppImage')
     console.log('✓ AppImage updated 9.9.0 → 9.9.1 and rejected a tampered file')
   } finally {
     server.close()
@@ -395,23 +453,37 @@ async function linuxDeb(work, publicKey, privateKey) {
       console.log(`Deb update test skipped: ${exe} was not installed.`)
       return
     }
-    const home = path.join(work, 'home-deb')
-    const status = path.join(work, 'status-deb.txt')
-    const log = path.join(work, 'log-deb.txt')
-    require('node:fs').mkdirSync(home, { recursive: true })
-    const xvfb = startXvfb()
-    await new Promise((resolve) => setTimeout(resolve, 400))
-    const env = appEnv(process.env, url, publicKey, status, home)
-    env.DISPLAY = xvfb.display
-    let text
-    try {
-      text = await finishLaunch(launchAndWait(exe, ['--no-sandbox'], env, status, 'positive', 180_000, log))
-    } finally {
-      xvfb.child.kill('SIGTERM')
+    const launchDeb = async (label, predicate) => {
+      const home = path.join(work, `home-deb-${label}`)
+      const status = path.join(work, `status-deb-${label}.txt`)
+      const log = path.join(work, `log-deb-${label}.txt`)
+      require('node:fs').mkdirSync(home, { recursive: true })
+      const xvfb = startXvfb()
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      const env = appEnv(process.env, url, publicKey, status, home)
+      env.DISPLAY = xvfb.display
+      try {
+        return await finishLaunch(launchAndWait(exe, ['--no-sandbox'], env, status, predicate, 180_000, log))
+      } finally {
+        xvfb.child.kill('SIGTERM')
+      }
     }
+    const positive = await launchDeb('positive', 'positive')
     console.log('--- deb status ---')
-    console.log(text.trim())
-    console.log('✓ deb updated 9.9.0 → 9.9.1 and the new version started on its own')
+    console.log(positive.trim())
+    const published = path.join(feed, path.basename(toDeb))
+    flipLastByte(published)
+    await rewriteChecksumKeepSignature(path.join(feed, 'latest-linux.yml'), published)
+    spawnSync('sudo', ['-n', 'apt-get', 'remove', '-y', 'flowa-e2e'], { stdio: 'inherit' })
+    const reinstalled = spawnSync('sudo', ['-n', 'apt-get', 'install', '-y', fromDeb], { stdio: 'inherit' })
+    if (reinstalled.status !== 0 || !existsSync(exe)) {
+      throw new Error('could not reinstall 9.9.0 for the deb tamper case')
+    }
+    const negative = await launchDeb('negative', (text) => text.includes(`booted ${FROM}`) && text.includes('rejected'))
+    console.log('--- deb negative status ---')
+    console.log(negative.trim())
+    assertTamperRehearsal(positive, negative, 'deb')
+    console.log('✓ deb updated 9.9.0 → 9.9.1, quit, relaunched, and rejected a tampered package')
   } finally {
     server.close()
     await cleanupE2ERehearsal()
@@ -429,18 +501,22 @@ export function macFeedOptions(arch, privateKeyPem) {
 }
 
 /** Both cases are required. A missing tamper run, or a tampered file that installs, throws. */
-export function assertMacRehearsal(positive, negative, from = FROM, to = TO) {
+export function assertTamperRehearsal(positive, negative, label = 'update', from = FROM, to = TO) {
   const errors = []
   if (typeof positive !== 'string' || !positive.includes(`booted ${from}`) || !positive.includes(`installing ${to}`) || !positive.includes(`booted ${to}`)) {
-    errors.push('positive Mac update did not install')
+    errors.push(`positive ${label} update did not install`)
   }
   if (typeof negative !== 'string' || !negative.includes(`booted ${from}`) || !negative.includes('rejected')) {
-    errors.push('tampered Mac update was not rejected')
+    errors.push(`tampered ${label} update was not rejected`)
   }
   if (typeof negative === 'string' && negative.includes(`booted ${to}`)) {
-    errors.push('tampered Mac update was installed')
+    errors.push(`tampered ${label} update was installed`)
   }
   if (errors.length > 0) throw new Error(errors.join('\n'))
+}
+
+export function assertMacRehearsal(positive, negative, from = FROM, to = TO) {
+  assertTamperRehearsal(positive, negative, 'Mac', from, to)
 }
 
 async function mac(work, publicKey, privateKey, arch) {
@@ -517,23 +593,42 @@ async function windows(work, publicKey, privateKey) {
   copyFileSync(toExe, path.join(feed, path.basename(toExe)))
   await writeUpdateFeeds(feed, TO, { privateKeyPem: privateKey, blockMaps: false, releaseDate: '2026-10-20T00:00:00.000Z' })
   const { server, url } = await serve(feed)
-  try {
+  const localAppData = process.env.LOCALAPPDATA ?? ''
+  const exe = windowsInstalledExe(localAppData)
+  const installFresh = async () => {
+    const uninstaller = path.win32.join(path.win32.dirname(exe), `Uninstall ${E2E_PRODUCT_NAME}.exe`)
+    if (existsSync(uninstaller)) spawnSync(uninstaller, ['/S'], { stdio: 'inherit' })
+    rmSync(path.win32.join(localAppData, 'flowa-e2e-updater'), { recursive: true, force: true })
     const installed = spawnSync(fromExe, windowsInstallerArgs(), { stdio: 'inherit' })
     if (installed.status !== 0) throw new Error(`NSIS install exited ${installed.status}`)
-    const exe = windowsInstalledExe(process.env.LOCALAPPDATA ?? '')
     const started = Date.now()
     while (!existsSync(exe)) {
       if (Date.now() - started > 60_000) throw new Error(`installer did not produce ${exe}`)
       await new Promise((resolve) => setTimeout(resolve, 500))
     }
-    const home = path.join(work, 'home-win')
-    const status = path.join(work, 'status-win.txt')
-    const log = path.join(work, 'log-win.txt')
+  }
+  const launchWin = async (label, predicate) => {
+    const home = path.join(work, `home-win-${label}`)
+    const status = path.join(work, `status-win-${label}.txt`)
+    const log = path.join(work, `log-win-${label}.txt`)
     require('node:fs').mkdirSync(home, { recursive: true })
     const env = appEnv(process.env, url, publicKey, status, home)
-    const text = await finishLaunch(launchAndWait(exe, ['--no-sandbox'], env, status, 'positive', 180_000, log))
-    console.log(text.trim())
-    console.log('✓ Windows NSIS updated 9.9.0 → 9.9.1, quit, and the new version started on its own')
+    return finishLaunch(launchAndWait(exe, ['--no-sandbox'], env, status, predicate, 180_000, log))
+  }
+  try {
+    await installFresh()
+    const positive = await launchWin('positive', 'positive')
+    console.log('--- windows status ---')
+    console.log(positive.trim())
+    const published = path.join(feed, path.basename(toExe))
+    flipLastByte(published)
+    await rewriteChecksumKeepSignature(path.join(feed, 'latest.yml'), published)
+    await installFresh()
+    const negative = await launchWin('negative', (text) => text.includes(`booted ${FROM}`) && text.includes('rejected'))
+    console.log('--- windows negative status ---')
+    console.log(negative.trim())
+    assertTamperRehearsal(positive, negative, 'Windows')
+    console.log('✓ Windows NSIS updated 9.9.0 → 9.9.1, quit, relaunched, and rejected a tampered exe')
   } finally {
     server.close()
     await cleanupE2ERehearsal()
