@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it, afterEach } from 'vitest'
+import { executableName } from '../scripts/e2e-update.mjs'
 import {
   E2E_BUNDLE_ID,
   E2E_PRODUCT_NAME,
@@ -103,6 +104,15 @@ describe('install quit deadline', () => {
     expect(installRelaunchTimeoutMessage(text, to, 42, () => false)).toBe(
       'app exited after installing 9.9.1 but 9.9.1 did not start on its own'
     )
+  })
+})
+
+describe('windows rehearsal command', () => {
+  it('spawns npx.cmd so the Windows runner can start the packages', () => {
+    expect(executableName('npx', 'win32')).toBe('npx.cmd')
+    expect(executableName('npm', 'win32')).toBe('npm.cmd')
+    expect(executableName('npx', 'linux')).toBe('npx')
+    expect(executableName('bash', 'win32')).toBe('bash')
   })
 })
 

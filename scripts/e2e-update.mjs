@@ -37,9 +37,14 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const FROM = '9.9.0'
 const TO = '9.9.1'
 
+export function executableName(cmd, platform = process.platform) {
+  if (platform === 'win32' && (cmd === 'npx' || cmd === 'npm')) return `${cmd}.cmd`
+  return cmd
+}
+
 function run(cmd, args, env = process.env) {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { cwd: root, env, stdio: 'inherit' })
+    const child = spawn(executableName(cmd), args, { cwd: root, env, stdio: 'inherit' })
     child.on('error', reject)
     child.on('exit', (code) => {
       if (code === 0) resolve()
