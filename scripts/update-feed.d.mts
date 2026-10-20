@@ -9,13 +9,19 @@ export function renderUpdateYaml(doc: {
   releaseDate: string
 }): string
 export function ensureBlockMap(filePath: string): Promise<void>
+export function macArtifactGaps(names: string[], macArch?: 'arm64' | 'x64' | null): string[]
 export function writeUpdateFeeds(
   dir: string,
   version: string,
-  options?: { releaseDate?: string; blockMaps?: boolean; privateKeyPem?: string | null }
+  options?: { releaseDate?: string; blockMaps?: boolean; privateKeyPem?: string | null; macArch?: 'arm64' | 'x64' }
 ): Promise<string[]>
 export function verifyUpdateFeeds(
   dir: string,
   version: string,
-  options?: { requireSignatures?: boolean; publicKeyPem?: string | null; requireBlockMaps?: boolean }
+  options?: {
+    requireSignatures?: boolean
+    publicKeyPem?: string | null
+    requireBlockMaps?: boolean
+    macArch?: 'arm64' | 'x64'
+  }
 ): Promise<string[]>

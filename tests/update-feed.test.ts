@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -7,6 +7,7 @@ import { nextVersion } from '../scripts/next-version.mjs'
 import {
   channelForArtifact,
   hashFile,
+  macArtifactGaps,
   macZipName,
   sortFeedFiles,
   verifyUpdateFeeds,
@@ -96,6 +97,39 @@ describe('update feed', () => {
     writeFileSync(path.join(dir, 'Flowa-1.2.1-arm64.dmg'), 'stapled bytes differ\n')
     const errors = await verifyUpdateFeeds(dir, '1.2.1')
     expect(errors.some((line) => line.includes('Flowa-1.2.1-arm64.dmg'))).toBe(true)
+  })
+
+  it('demands both arches and both dmgs unless the rehearsal names one arch', async () => {
+    const armOnly = mkdtempSync(path.join(tmpdir(), 'flowa-feed-arm-'))
+    writeFileSync(path.join(armOnly, 'Flowa-9.9.1-arm64-mac.zip'), 'arm zip')
+    await expect(
+      writeUpdateFeeds(armOnly, '9.9.1', { blockMaps: false, releaseDate: '2026-10-20T00:00:00.000Z' })
+    ).rejects.toThrow('missing x64 updater zip\nmissing arm64 dmg\nmissing x64 dmg')
+    expect(macArtifactGaps(['Flowa-9.9.1-arm64-mac.zip'])).toEqual([
+      'missing x64 updater zip',
+      'missing arm64 dmg',
+      'missing x64 dmg'
+    ])
+    expect(macArtifactGaps(['Flowa-9.9.1-arm64-mac.zip'], 'arm64')).toEqual([])
+    expect(macArtifactGaps(['Flowa-9.9.1-x64-mac.zip'], 'arm64')).toEqual(['missing arm64 updater zip'])
+    expect(() => macArtifactGaps(['Flowa-9.9.1-arm64-mac.zip'], 'universal' as 'arm64')).toThrow(/unsupported mac arch/)
+
+    const release = mkdtempSync(path.join(tmpdir(), 'flowa-feed-release-'))
+    for (const name of [
+      'Flowa-1.2.2-arm64-mac.zip',
+      'Flowa-1.2.2-x64-mac.zip',
+      'Flowa-1.2.2-arm64.dmg',
+      'Flowa-1.2.2-x64.dmg'
+    ]) {
+      writeFileSync(path.join(release, name), name)
+    }
+    await expect(
+      writeUpdateFeeds(release, '1.2.2', { blockMaps: false, releaseDate: '2026-10-20T00:00:00.000Z' })
+    ).resolves.toEqual(['latest-mac.yml'])
+    rmSync(path.join(release, 'Flowa-1.2.2-x64.dmg'))
+    const gaps = await verifyUpdateFeeds(release, '1.2.2', { requireBlockMaps: false })
+    expect(gaps).toContain('latest-mac.yml: missing Flowa-1.2.2-x64.dmg')
+    expect(gaps).toContain('missing x64 dmg')
   })
 })
 

@@ -2,7 +2,8 @@
 # Packaged macOS update rehearsal. Run this on the release Mac.
 # It Developer ID signs a slim test app (the Whisper models stay in the real
 # installers only), serves the next version from localhost, and checks that
-# the app downloads, verifies, and restarts. It does not set
+# the app downloads, verifies, and restarts, then rejects a tampered zip
+# and stays on the old version. It does not set
 # FLOWA_E2E_ALLOW_UNSIGNED and it does not notarize.
 #
 #   bash scripts/e2e-update-mac.sh

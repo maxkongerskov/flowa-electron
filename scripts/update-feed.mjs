@@ -107,6 +107,30 @@ function artifactNames(dir) {
   })
 }
 
+/**
+ * A release feed lists both updater zips and both dmgs.
+ * The Mac rehearsal passes macArch and only has that arch's zip.
+ * Any other value is refused, so a typo cannot skip the release check.
+ */
+export function macArtifactGaps(names, macArch) {
+  const mac = names.filter((name) => channelForArtifact(name) === 'latest-mac.yml')
+  if (mac.length === 0) return []
+  const zips = mac.filter((name) => name.toLowerCase().endsWith('.zip'))
+  const isArm = (name) => name.toLowerCase().includes('arm64')
+  if (macArch === 'arm64' || macArch === 'x64') {
+    const present = macArch === 'arm64' ? zips.some(isArm) : zips.some((name) => !isArm(name))
+    return present ? [] : [`missing ${macArch} updater zip`]
+  }
+  if (macArch != null) throw new Error(`unsupported mac arch ${macArch}`)
+  const dmgs = mac.filter((name) => name.toLowerCase().endsWith('.dmg'))
+  const errors = []
+  if (!zips.some(isArm)) errors.push('missing arm64 updater zip')
+  if (!zips.some((name) => !isArm(name))) errors.push('missing x64 updater zip')
+  if (!dmgs.some(isArm)) errors.push('missing arm64 dmg')
+  if (!dmgs.some((name) => !isArm(name))) errors.push('missing x64 dmg')
+  return errors
+}
+
 export async function verifyUpdateFeeds(dir, version, options = {}) {
   const errors = []
   const names = artifactNames(dir)
@@ -160,15 +184,7 @@ export async function verifyUpdateFeeds(dir, version, options = {}) {
       if (hasAppImage && !first.endsWith('.appimage')) errors.push(`${channel}: path must be the AppImage`)
     }
   }
-  const mac = names.filter((name) => channelForArtifact(name) === 'latest-mac.yml')
-  if (mac.length > 0) {
-    const zips = mac.filter((name) => name.toLowerCase().endsWith('.zip'))
-    const dmgs = mac.filter((name) => name.toLowerCase().endsWith('.dmg'))
-    if (!zips.some((name) => name.toLowerCase().includes('arm64'))) errors.push('missing arm64 updater zip')
-    if (!zips.some((name) => !name.toLowerCase().includes('arm64'))) errors.push('missing x64 updater zip')
-    if (!dmgs.some((name) => name.toLowerCase().includes('arm64'))) errors.push('missing arm64 dmg')
-    if (!dmgs.some((name) => !name.toLowerCase().includes('arm64'))) errors.push('missing x64 dmg')
-  }
+  errors.push(...macArtifactGaps(names, options.macArch))
   if (options.requireBlockMaps !== false) {
     for (const name of names) {
       if (!wantsBlockMap(name)) continue
@@ -214,6 +230,7 @@ export async function writeUpdateFeeds(dir, version, options = {}) {
   }
   const verifyOptions = {
     requireBlockMaps: options.blockMaps !== false,
+    ...(options.macArch ? { macArch: options.macArch } : {}),
     ...(privateKeyPem ? { requireSignatures: true, publicKeyPem: publicKeyFromPrivate(privateKeyPem) } : {})
   }
   const errors = await verifyUpdateFeeds(dir, version, verifyOptions)

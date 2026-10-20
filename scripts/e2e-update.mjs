@@ -5,7 +5,8 @@
 // a localhost feed, and checks that N downloads it, verifies the ed25519
 // signature, and restarts as N+1. A second run tampers the file and rewrites
 // the feed checksum while keeping the old signature; that install must be
-// rejected.
+// rejected and the app must stay on N. The Mac run cannot succeed unless
+// both of those cases complete.
 //
 // Linux runs the AppImage here. macOS is started from scripts/e2e-update-mac.sh
 // so the app is Developer ID signed. Windows is the same script on windows-latest.
@@ -18,7 +19,7 @@ import { createServer } from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { createRequire } from 'node:module'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { generateUpdateKeyPair, sha256File, signSha256 } from './update-trust.mjs'
 import { writeUpdateFeeds } from './update-feed.mjs'
 import { writeAppUpdateYml } from './app-update-yml.mjs'
@@ -121,7 +122,7 @@ function findFile(dir, suffix) {
   return path.join(dir, found)
 }
 
-function rewriteChecksumKeepSignature(ymlPath, filePath) {
+export function rewriteChecksumKeepSignature(ymlPath, filePath) {
   const doc = yaml.load(readFileSync(ymlPath, 'utf8'))
   return hashFileSha512(filePath).then((hashed) => {
     const name = path.basename(filePath)
@@ -299,6 +300,31 @@ async function linuxDeb(work, publicKey, privateKey) {
   }
 }
 
+export function macFeedOptions(arch, privateKeyPem) {
+  if (arch !== 'arm64' && arch !== 'x64') throw new Error(`unsupported mac arch ${arch}`)
+  return {
+    privateKeyPem,
+    blockMaps: false,
+    releaseDate: '2026-10-20T00:00:00.000Z',
+    macArch: arch
+  }
+}
+
+/** Both cases are required. A missing tamper run, or a tampered file that installs, throws. */
+export function assertMacRehearsal(positive, negative, from = FROM, to = TO) {
+  const errors = []
+  if (typeof positive !== 'string' || !positive.includes(`booted ${from}`) || !positive.includes(`installing ${to}`) || !positive.includes(`booted ${to}`)) {
+    errors.push('positive Mac update did not install')
+  }
+  if (typeof negative !== 'string' || !negative.includes(`booted ${from}`) || !negative.includes('rejected')) {
+    errors.push('tampered Mac update was not rejected')
+  }
+  if (typeof negative === 'string' && negative.includes(`booted ${to}`)) {
+    errors.push('tampered Mac update was installed')
+  }
+  if (errors.length > 0) throw new Error(errors.join('\n'))
+}
+
 async function mac(work, publicKey, privateKey) {
   if (process.env.FLOWA_E2E_ALLOW_UNSIGNED === '1') {
     throw new Error('The Mac update test uses Developer ID. Unset FLOWA_E2E_ALLOW_UNSIGNED.')
@@ -326,19 +352,41 @@ async function mac(work, publicKey, privateKey) {
   require('node:fs').mkdirSync(feed)
   const zip = path.join(feed, zipName)
   await run('ditto', ['-c', '-k', '--keepParent', toApp, zip])
-  await writeUpdateFeeds(feed, TO, { privateKeyPem: privateKey, blockMaps: false, releaseDate: '2026-10-20T00:00:00.000Z' })
+  await writeUpdateFeeds(feed, TO, macFeedOptions(arch, privateKey))
+  // quitAndInstall replaces the running bundle. Keep a signed copy of N, and
+  // give the tamper run its own HOME so it cannot reuse the good download.
+  const stayApp = path.join(work, 'stay', 'Flowa.app')
+  require('node:fs').mkdirSync(path.dirname(stayApp))
+  await run('ditto', [fromApp, stayApp])
   const { server, url } = await serve(feed)
-  try {
-    const home = path.join(work, 'home-mac')
-    const status = path.join(work, 'status-mac.txt')
-    const log = path.join(work, 'log-mac.txt')
+  const launch = async (label, appPath, predicate) => {
+    const home = path.join(work, `home-${label}`)
+    const status = path.join(work, `status-${label}.txt`)
+    const log = path.join(work, `log-${label}.txt`)
     require('node:fs').mkdirSync(home, { recursive: true })
+    console.log(`▶ launch ${label}`)
     const env = appEnv(process.env, url, publicKey, status, home)
-    const bin = path.join(fromApp, 'Contents', 'MacOS', 'Flowa')
-    const result = await launchAndWait(bin, ['--no-sandbox'], env, status, (text) => text.includes(`booted ${FROM}`) && text.includes(`booted ${TO}`), 180_000, log)
-    console.log(result.text.trim())
+    const bin = path.join(appPath, 'Contents', 'MacOS', 'Flowa')
+    const result = await launchAndWait(bin, ['--no-sandbox'], env, status, predicate, 180_000, log)
     for (const pid of pidsIn(result.text)) killPid(pid)
-    console.log('✓ Mac app updated 9.9.0 → 9.9.1')
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    for (const pid of pidsIn(result.text)) {
+      try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ }
+    }
+    try { process.kill(-result.child.pid, 'SIGTERM') } catch { /* group already gone */ }
+    return result.text
+  }
+  try {
+    const positive = await launch('positive', fromApp, (text) => text.includes(`booted ${FROM}`) && text.includes(`booted ${TO}`))
+    console.log('--- positive status ---')
+    console.log(positive.trim())
+    flipLastByte(zip)
+    await rewriteChecksumKeepSignature(path.join(feed, 'latest-mac.yml'), zip)
+    const negative = await launch('negative', stayApp, (text) => text.includes(`booted ${FROM}`) && text.includes('rejected'))
+    console.log('--- negative status ---')
+    console.log(negative.trim())
+    assertMacRehearsal(positive, negative)
+    console.log('✓ Mac app updated 9.9.0 → 9.9.1 and rejected a tampered zip')
   } finally {
     server.close()
   }
@@ -398,7 +446,10 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err instanceof Error ? err.stack ?? err.message : err)
-  process.exit(1)
-})
+const invoked = process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
+if (invoked) {
+  main().catch((err) => {
+    console.error(err instanceof Error ? err.stack ?? err.message : err)
+    process.exit(1)
+  })
+}

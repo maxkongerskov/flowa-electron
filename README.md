@@ -160,7 +160,9 @@ bash scripts/build-release.sh
 
 `npm run release` does not push a tag before the build. If a build fails, fix it and run the
 same version again. The packaged rehearsal on this Mac is `bash scripts/e2e-update-mac.sh`
-(Developer ID, no notarization, slim app without the Whisper weights). Linux is
+(Developer ID, no notarization, slim app without the Whisper weights). It installs
+9.9.1 from that arch's zip, then rejects a tampered zip and stays on 9.9.0.
+Linux is
 `node scripts/e2e-update.mjs`. Windows is the optional Actions workflow
 `.github/workflows/e2e-update-windows.yml` (no secrets).
 
