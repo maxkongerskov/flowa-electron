@@ -31,10 +31,11 @@ class PermissionChecker extends EventEmitter {
   }
   private timer: NodeJS.Timeout | null = null
   private linuxToolCheckedAt = 0
+  private checking = false
 
   start(): void {
     void this.check()
-    this.timer = setInterval(() => void this.check(), 2000)
+    this.timer = setInterval(() => void this.check(), 15_000)
   }
 
   stop(): void {
@@ -47,6 +48,16 @@ class PermissionChecker extends EventEmitter {
   }
 
   async check(): Promise<void> {
+    if (this.checking) return
+    this.checking = true
+    try {
+      await this.checkNow()
+    } finally {
+      this.checking = false
+    }
+  }
+
+  private async checkNow(): Promise<void> {
     const next: PermissionsState = { ...this.state, applicable: { ...this.state.applicable } }
     if (process.platform === 'darwin') {
       next.microphone = systemPreferences.getMediaAccessStatus('microphone') === 'granted'

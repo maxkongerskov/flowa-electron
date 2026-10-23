@@ -47,14 +47,18 @@ npm install                 # also fetches the Electron binary (postinstall)
 npm run setup:mac-helper    # macOS only: builds resources/mac/flowa-helper (fn key + paste)
 npm run setup:whisper       # builds whisper.cpp v1.9.5 → resources/bin/<platform>-<arch>/
 npm run setup:model         # downloads ggml-large-v3-turbo.bin (1.6 GB, sha1-verified) → models/
+npm run setup:small         # optional: ggml-small.bin (Whisper Small, ~466 MB, sha1-verified) → models/
+# FLOWA_WHISPER_VARIANT=cuda npm run setup:whisper     # whisper-server-cuda
+# FLOWA_WHISPER_VARIANT=vulkan npm run setup:whisper   # whisper-server-vulkan
 npm test                    # unit tests for the ported logic
 npm start                   # build + run the app
 ```
 
 `npm run dev` starts the app with hot reload for the renderer.
 
-If you skip `setup:model`, the app downloads the model into its own data folder on first run
-(the "Installing" screen, with resume and sha1 check).
+If you skip `setup:model`, the app downloads Whisper Turbo into its own data folder on first run
+(the "Installing" screen, with resume and sha1 check). Whisper Small downloads the same way
+the first time you select it.
 
 ### Dev self-tests (no hotkey needed)
 
@@ -77,32 +81,96 @@ on a Mac (`npm run dist:win` / `npm run dist:linux` from macOS); you do not need
 Linux machine for the installer itself. The whisper engine inside it must already be the
 target OS's binary (see the release script below).
 
-### Release installers (what to run after this merges)
+### Releasing an update
 
-The signed, model-bundled release is **`bash scripts/build-release.sh`**, run **on a Mac**.
-It reads the version from `package.json` (1.2.0 → `Flowa-1.2.0-arm64.dmg`,
-`Flowa-Setup-1.2.0-x64.exe`, …) and calls `electron-builder` with
-`electron-builder.release.cjs`, which wraps `electron-builder.yml`, bundles
-`models/ggml-large-v3-turbo.bin`, and picks `resources/bin/<os>-<arch>/` per target so a
-Mac build does not ship the macOS engine inside the Windows installer.
-
-The script itself cross-builds the other platforms. After the two macOS dmgs it runs:
+On a Mac, one command runs the unit tests and the packaged update test, then builds.
+It commits, tags, and pushes only after that build succeeds, then publishes the GitHub
+Release. Notarization is required. A failure in tests, the update rehearsal, signing,
+notarization, stapling, or the feed check leaves no tag on origin.
 
 ```bash
-npx electron-builder --config electron-builder.release.cjs --win nsis --x64
-npx electron-builder --config electron-builder.release.cjs --linux AppImage deb --x64
+npm run release -- patch          # next patch, then build and publish
+npm run release -- minor
+npm run release -- 1.2.2          # package.json is already 1.2.2: build and publish it
 ```
 
-So **yes: the Windows installer is cross-built on macOS.** No Windows host, no Wine step in
-this repo — electron-builder's NSIS target produces `Flowa-Setup-<version>-x64.exe` from the
-Mac. Linux AppImage and `.deb` are cross-built the same way. The script only builds Windows
-and Linux **x64** (the yml also lists Windows arm64, but the release script does not pass it).
+Before that command will succeed:
 
-Before it will succeed, the Mac needs a Developer ID (`security find-identity`), the staged
-engines `resources/bin/{darwin-arm64,darwin-x64,win32-x64,linux-x64}/`, and
-`models/ggml-large-v3-turbo.bin` with sha1 `4af2b29d7ec73d781377bfd1758ca957a807e941`.
-Override the signing identity or notary profile with `FLOWA_SIGN_ID` / `FLOWA_NOTARY_PROFILE`.
-Output lands in `release/`. Code signing of the Windows exe is not configured.
+- a clean git tree, on a branch
+- Developer ID `0EF5E5C4F619F8322BB10EE8255603A26AB18553` in the keychain (`security find-identity`), or set `FLOWA_SIGN_ID`
+- notarytool keychain profile `AC_PASSWORD` (`xcrun notarytool history --keychain-profile AC_PASSWORD`), or set `FLOWA_NOTARY_PROFILE`
+- `gh auth status` for `maxkongerskov/flowa-electron`
+- staged engines `resources/bin/{darwin-arm64,darwin-x64,win32-x64,linux-x64}/`
+- `models/ggml-large-v3-turbo.bin` with sha1 `4af2b29d7ec73d781377bfd1758ca957a807e941`
+- an update signing key whose public half is committed (see below)
+
+`electron-builder.release.cjs` bundles the Whisper models and picks `resources/bin/<os>-<arch>/`
+per target, so the Mac build does not ship the macOS engine inside the Windows installer.
+Windows and Linux are cross-built on the Mac (NSIS x64, AppImage, and deb). No Windows host
+and no Wine step. Windows arm64 is not built. A `.deb` install updates itself when `dpkg` or
+`apt` is available; anything else on Linux opens the release page.
+
+Updates are signed with ed25519 over the SHA-256 of each file. The private key stays on the
+release Mac. The app refuses to install a file whose signature does not match the public key
+baked into that build. macOS still also requires a Developer ID signature. There is no Windows
+Authenticode certificate; the ed25519 check is what stops a replaced exe.
+
+Generate the key once, on the Mac that will publish:
+
+```bash
+bash scripts/generate-update-key.sh
+git add src/shared/updatePublicKey.ts
+git commit -m "Add the update signing public key"
+```
+
+The private key defaults to `~/.config/flowa/update-private.pem` (`FLOWA_UPDATE_KEY` overrides
+the path). Do not commit it. `npm run release` aborts if that file is missing or if its public
+half does not match `src/shared/updatePublicKey.ts`.
+
+What lands in `release/` and on the GitHub Release (draft until every upload succeeds, then Latest):
+
+| File | Who uses it |
+|---|---|
+| `Flowa-<version>-arm64.dmg`, `Flowa-<version>-x64.dmg` | People downloading Flowa. Signed, notarized, stapled. |
+| `Flowa-<version>-arm64-mac.zip`, `Flowa-<version>-x64-mac.zip` | electron-updater only. The app never shows these. The zip is not codesigned; the app inside it is. |
+| `Flowa-Setup-<version>-x64.exe` | Windows NSIS |
+| `Flowa-<version>.AppImage`, `flowa_<version>_amd64.deb` | Linux |
+| `latest-mac.yml`, `latest.yml`, `latest-linux.yml` | Written **after** stapling, with sha512, size, and ed25519 of the final files |
+| `*.blockmap` | Differential download for the zip, exe, and AppImage |
+
+`latest-mac.yml` lists both zips and both dmgs. Each packaged app contains `app-update.yml`
+(on Mac it is written into the `.app` before signing, because electron-builder's `dir` target
+does not write it). Home → **Check for updates**, then **Download**. Progress stays in the
+banner. When the download finishes and the signature checks out, Flowa quits and restarts into
+the new version. An unsigned Mac build keeps the dmg link instead of swapping itself.
+
+Installed 1.2.0 and 1.2.1 Mac apps do not contain `app-update.yml`, so they cannot download
+1.2.2 from inside the app. Install 1.2.2 from the dmg once. Updates after that can install
+themselves. Windows and Linux 1.2.1 can still download 1.2.2, but those builds do not check
+the ed25519 signature. The check starts with 1.2.2, for the update after it.
+
+To rebuild the current version without publishing (still on a Mac, after the key exists):
+
+```bash
+FLOWA_SIGN_ID=0EF5E5C4F619F8322BB10EE8255603A26AB18553 \
+FLOWA_NOTARY_PROFILE=AC_PASSWORD \
+FLOWA_UPDATE_KEY="$HOME/.config/flowa/update-private.pem" \
+bash scripts/build-release.sh
+```
+
+`npm run release` does not push a tag before the build. If a build fails, fix it and run the
+same version again. The packaged rehearsal on this Mac is `bash scripts/e2e-update-mac.sh`
+(Developer ID, no notarization, slim app without the Whisper weights). It tests
+the arm64 zip and the x64 zip. Each one must quit within 20 seconds of
+`installing`, start 9.9.1 on its own, then reject a tampered zip and stay on
+9.9.0. The rehearsal bundle id is `com.maxkongerskov.FlowaElectron.e2e`, so it
+does not share ShipIt's cache with an installed Flowa.
+Linux is
+`node scripts/e2e-update.mjs`. Windows is the optional Actions workflow
+`.github/workflows/e2e-update-windows.yml` (no secrets).
+
+Clearing recent dictations rewrites `recent.json`. It does not erase copies already in
+APFS snapshots or Time Machine.
 
 ### Dictation shortcut
 
@@ -195,6 +263,48 @@ The model loads in 1–4 s.
 
 ---
 
+## Hardware and speech model
+
+Home has two dropdowns, stored in `prefs.json` with the same pattern as the other preferences:
+
+| Preference | Key | Default | Values |
+|---|---|---|---|
+| Hardware | `flowa.hardware` | `gpu` | `gpu` (automatic), `metal`, `cuda`, `vulkan`, `cpu` |
+| Speech model | `flowa.speechModel` | `whisper-turbo` | `whisper-turbo`, `whisper-small` |
+
+**Whisper Turbo stays the default.** A saved `parakeet-tdt-0.6b-v3` value is no longer a model and loads as Turbo.
+
+**GPU (automatic)** picks a real backend, not a label. Both speech models use it:
+
+| OS | Automatic choice |
+|---|---|
+| macOS | Apple Metal, when the whisper.cpp binary was built with Metal (the default `npm run setup:whisper` on a Mac) |
+| Windows / Linux with an NVIDIA driver | NVIDIA CUDA, when `whisper-server-cuda` is staged |
+| Windows / Linux otherwise | Vulkan, when a Vulkan whisper.cpp binary is staged and a Vulkan loader (or an NVIDIA driver, for a Vulkan-instead-of-CUDA build) is present |
+| Anything else | CPU |
+
+Picking Metal, CUDA, or Vulkan directly uses that backend. When it isn't staged, or the process fails to start on it, Flowa retries on the CPU and shows a quiet yellow note on Home (the same warning banner as the other in-app status text). There is no dialog and no system notification. Choosing CPU skips the GPU attempt and shows no note.
+
+Whisper uses whisper.cpp v1.9.5. `-ng` forces CPU. CUDA and Vulkan are extra binaries (`whisper-server-cuda`, `whisper-server-vulkan`) so one `resources/bin` folder can hold more than one backend. `whisper-backends.json` records what the build script compiled. The speech-model dropdown only changes the `-m` file passed to that same binary.
+
+### Whisper Small
+
+**OpenAI Whisper small**, multilingual (not `small.en`). Same ggml f16 conversion whisper.cpp publishes, MIT license, about 466 MB:
+
+| | |
+|---|---|
+| File | `ggml-small.bin` |
+| Checkpoint | `openai/whisper-small` |
+| Source | [huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin) |
+| Size | 487,601,967 bytes |
+| SHA-1 | `55356645c2b361a969dfd0ef2c5a50d530afd8d5` (whisper.cpp v1.9.5 `models/README.md`) |
+
+`npm run setup:small` downloads it into `models/`. The app also looks in `<appData>/Flowa-Electron/models/ggml-small.bin` and downloads that file the first time Small is selected, the same way Turbo downloads `ggml-large-v3-turbo.bin`. Selecting Small restarts whisper.cpp with `ggml-small.bin`. Selecting Turbo again uses `ggml-large-v3-turbo.bin`. A Turbo file on disk does not satisfy Small.
+
+A release build still requires Turbo. `electron-builder.release.cjs` also copies `models/ggml-small.bin` when that file has been staged. Both weights stay gitignored.
+
+---
+
 ## Parity checklist
 
 ✅ done · 🟡 partial · ⛔ not portable (with the substitute used)
@@ -223,8 +333,9 @@ The model loads in 1–4 s.
 | Preferences (UserDefaults keys) | `store.ts` → `prefs.json` | ✅ same keys |
 | Recent dictations JSON | `recent.ts` | ✅ format-compatible (sorted keys, ISO 8601, upper-case UUIDs) |
 | Language catalog (99 + auto) | `languages.ts` | ✅ generated from `LanguageOption.swift` |
-| Unit tests (Swift `FlowaTests`) | `tests/*.test.ts` (83) | ✅ logic tests ported, including shortcut validation, migration, and the recorder. 🟡 the E2E fixtures run through the dev self-test, not under vitest |
-| Code signing / notarization / Sparkle-style updates | – | ⛔ not done yet (needs certificates) |
+| Unit tests (Swift `FlowaTests`) | `tests/*.test.ts` (99) | ✅ logic tests ported, including shortcut validation, migration, the recorder, and update checks. 🟡 the E2E fixtures run through the dev self-test, not under vitest |
+| Code signing / notarization | – | ⛔ not done yet (needs certificates) |
+| Update check | `electron-updater` → GitHub `latest*.yml`, Home banner | ✅ Check for updates, then Download with progress, then quit and restart. Every artifact is ed25519-signed. macOS also requires Developer ID. Unsigned Mac builds and unsupported Linux packages open the release page |
 
 ## Platform-dependent parts and their equivalents
 
@@ -281,9 +392,9 @@ MIT (same as Swift-Flowa). whisper.cpp is MIT. The Whisper weights are MIT (Open
 2. **Default shortcut on Windows/Linux.** Resolved in 1.2.0: new installs use `F8`. Upgrades
    keep `Ctrl+Shift+Space`. Right Alt can be chosen on macOS and Windows; Linux cannot
    register a modifier by itself.
-3. **Model in installers vs. first-run download.** Bundling adds 1.6 GB per installer. A first-run
-   download keeps installers around 100 MB.
+3. **Model in installers vs. first-run download.** The Whisper weights stay inside the installers.
 4. **GitHub target.** Should this replace `maxkongerskov/Flowa`, or go into `Flowa-Windows` or a new repo?
 5. **Signing.** Signing/notarization needs an Apple Developer ID (team 6LZ2DS9JPD) and a Windows code-signing certificate.
-6. **Version number.** App version is 1.2.0 (`package.json`). The download table above is the
-   last published release, v1.1.0. The next `scripts/build-release.sh` run tags artifacts as 1.2.0.
+6. **Version number.** App version is 1.2.2 (`package.json`). `npm run release -- 1.2.2` publishes
+   that version after tests and a packaged update rehearsal. `npm run release -- patch` publishes
+   the next patch. The download table above stays on the last installers that were actually published.

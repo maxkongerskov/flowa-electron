@@ -1,10 +1,10 @@
 {
   "name": "flowa",
   "productName": "Flowa",
-  "version": "1.2.0",
+  "version": "1.2.2",
   "description": "Local voice dictation for macOS, Windows and Linux. Press a key, speak, press it again. Your words appear wherever your cursor is.",
   "main": "out/main/index.js",
-  "author": "Max K\u00f8ngerskov",
+  "author": "Max Køngerskov",
   "license": "MIT",
   "private": true,
   "homepage": "https://github.com/maxkongerskov/Flowa",
@@ -16,14 +16,18 @@
     "test": "vitest run",
     "setup:whisper": "node scripts/build-whisper.mjs",
     "setup:model": "node scripts/fetch-model.mjs",
+    "setup:small": "node scripts/fetch-model.mjs --small",
     "setup:mac-helper": "bash scripts/build-mac-helper.sh",
     "dist:mac": "bash scripts/build-mac-icons.sh && electron-vite build && electron-builder --mac",
     "dist:win": "electron-vite build && electron-builder --win",
     "dist:linux": "electron-vite build && electron-builder --linux",
+    "release": "bash scripts/release.sh",
     "postinstall": "node node_modules/electron/install.js",
     "setup:mac-icons": "bash scripts/build-mac-icons.sh"
   },
-  "dependencies": {},
+  "dependencies": {
+    "electron-updater": "6.8.9"
+  },
   "devDependencies": {
     "@types/node": "22.20.5",
     "@types/react": "19.3.0",
@@ -32,6 +36,7 @@
     "electron": "44.7.0",
     "electron-builder": "26.15.3",
     "electron-vite": "5.0.0",
+    "js-yaml": "4.3.2",
     "lucide-react": "1.54.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",

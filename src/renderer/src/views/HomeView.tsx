@@ -1,14 +1,15 @@
 // Port of Flowa/Sections/HomeView.swift — settings + recent dictations.
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AudioWaveform, ChevronDown, ChevronRight, CircleX, Command, Globe, Info, Mic, Power, Search, Timer } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { AudioWaveform, ChevronDown, ChevronRight, CircleX, Command, Cpu, Globe, Info, Layers, Mic, Power, RefreshCw, Search, Timer } from 'lucide-react'
 import type { AppState } from '@shared/types'
 import { languageDisplayName } from '@shared/languages'
 import { inputsForPicker, type AudioInputDevice } from '@shared/micDeviceKind'
 import { filterRecent } from '@shared/recent'
 import { recentMeta } from '@shared/status'
 import { maxDurationMinutesFromField, recommendedMaxDurationMinutes } from '@shared/prefs'
+import { hardwareChoices, hardwareHint, speechModelChoices, speechModelHint } from '@shared/speech'
 import { shortcutLimitNote } from '@shared/shortcut'
-import { ConflictBanner, ErrorBanner, PermissionBanner, StatusBanner } from '../components/Banners'
+import { ConflictBanner, ErrorBanner, PermissionBanner, StatusBanner, UpdateBanner } from '../components/Banners'
 import { DarkModeToggle, LanguagePicker, RecentRow, StatusPill } from '../components/HomeChrome'
 import { ShortcutField } from '../components/ShortcutField'
 import { AcknowledgementsView } from './AcknowledgementsView'
@@ -17,19 +18,22 @@ const f = window.flowa
 
 function useInputDevices(current: string): [AudioInputDevice[], () => Promise<AudioInputDevice[]>] {
   const [devices, setDevices] = useState<AudioInputDevice[]>([])
+  const currentRef = useRef(current)
+  currentRef.current = current
   const refresh = useCallback(async () => {
+    const selected = currentRef.current
     try {
       const list = inputsForPicker(await navigator.mediaDevices.enumerateDevices())
       setDevices(list)
       // Migrate stale prefs to system default (only when we can actually see devices).
-      if (list.length > 0 && current !== 'default' && current !== '' && !list.some((d) => d.uid === current)) {
+      if (list.length > 0 && selected !== 'default' && selected !== '' && !list.some((d) => d.uid === selected)) {
         void f.setPref('flowa.microphone', 'default')
       }
       return list
     } catch {
       return []
     }
-  }, [current])
+  }, [])
   useEffect(() => {
     void refresh()
     navigator.mediaDevices.addEventListener('devicechange', refresh)
@@ -89,6 +93,7 @@ export function HomeView({ state: s }: { state: AppState }) {
 
       <div className="scroll" style={{ flex: 1 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: '0 22px 22px' }}>
+          {s.prefsWarning && <StatusBanner severity="warning" title="Preferences were reset" detail={s.prefsWarning} />}
           {s.lastErrorMessage && <ErrorBanner message={s.lastErrorMessage} onDismiss={() => void f.action('dismissError')} />}
           {s.transcriber.kind === 'error' && (
             <StatusBanner
@@ -141,6 +146,12 @@ export function HomeView({ state: s }: { state: AppState }) {
             />
           )}
 
+          <UpdateBanner state={s.update} onOpen={() => void f.action('openUpdate')} onDismiss={() => void f.action('dismissUpdateNote')} />
+
+          {s.engineNotices.map((n) => (
+            <StatusBanner key={n.kind} severity="warning" detail={n.message} />
+          ))}
+
           {/* Settings card */}
           <div className="card" style={{ padding: '0 16px', position: 'relative' }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '8px 0' }}>
@@ -170,6 +181,30 @@ export function HomeView({ state: s }: { state: AppState }) {
                 }}
               />
             )}
+            <div className="hairline" />
+            <Row icon={Layers} label="Speech model">
+              <QuietSelect
+                ariaLabel="Speech model"
+                value={p['flowa.speechModel']}
+                options={speechModelChoices}
+                onChange={(id) => void f.setPref('flowa.speechModel', id)}
+              />
+            </Row>
+            <div style={{ fontSize: 10, lineHeight: 1.4, color: 'var(--text-tertiary)', padding: '0 0 10px 28px' }}>
+              {speechModelHint(p['flowa.speechModel'])}
+            </div>
+            <div className="hairline" />
+            <Row icon={Cpu} label="Hardware">
+              <QuietSelect
+                ariaLabel="Hardware"
+                value={p['flowa.hardware']}
+                options={hardwareChoices}
+                onChange={(id) => void f.setPref('flowa.hardware', id)}
+              />
+            </Row>
+            <div style={{ fontSize: 10, lineHeight: 1.4, color: 'var(--text-tertiary)', padding: '0 0 10px 28px' }}>
+              {hardwareHint(s.platform)}
+            </div>
             <div className="hairline" />
             <Row icon={Mic} label="Microphone">
               <button onClick={() => void openMicMenu()} style={{ display: 'flex', alignItems: 'center', gap: 4, maxWidth: 300 }}>
@@ -207,6 +242,26 @@ export function HomeView({ state: s }: { state: AppState }) {
               <button className="icon-btn" onClick={() => setAckOpen(true)} style={{ color: 'var(--text-tertiary)' }}>
                 <ChevronRight size={12} strokeWidth={3} />
               </button>
+            </Row>
+            <div className="hairline" />
+            <Row icon={RefreshCw} label="Version">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span className="tabular" style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{s.version}</span>
+                <button
+                  className="btn-bordered"
+                  disabled={s.update.kind === 'checking' || s.update.kind === 'downloading' || s.update.kind === 'downloaded' || s.update.kind === 'installing'}
+                  style={s.update.kind === 'checking' || s.update.kind === 'downloading' || s.update.kind === 'installing' ? { opacity: 0.6 } : undefined}
+                  onClick={() => void f.action('checkForUpdates')}
+                >
+                  {s.update.kind === 'checking'
+                    ? 'Checking…'
+                    : s.update.kind === 'downloading'
+                      ? 'Downloading…'
+                      : s.update.kind === 'downloaded' || s.update.kind === 'installing'
+                        ? 'Installing…'
+                        : 'Check for updates'}
+                </button>
+              </div>
             </Row>
           </div>
 
@@ -258,6 +313,29 @@ export function HomeView({ state: s }: { state: AppState }) {
       </div>
       {ackOpen && <AcknowledgementsView onClose={() => setAckOpen(false)} />}
     </div>
+  )
+}
+
+function QuietSelect<T extends string>(props: {
+  ariaLabel: string
+  value: T
+  options: ReadonlyArray<{ id: T; label: string }>
+  onChange: (id: T) => void
+}) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+      <select
+        aria-label={props.ariaLabel}
+        className="quiet-select"
+        value={props.value}
+        onChange={(e) => props.onChange(e.target.value as T)}
+      >
+        {props.options.map((o) => (
+          <option key={o.id} value={o.id}>{o.label}</option>
+        ))}
+      </select>
+      <ChevronDown size={10} strokeWidth={3} color="var(--text-tertiary)" style={{ marginLeft: -12, pointerEvents: 'none' }} />
+    </span>
   )
 }
 

@@ -18,11 +18,21 @@ export function ShortcutField(props: {
   const saving = useRef(false)
 
   useEffect(() => {
-    if (seenNonce.current === props.recordNonce) return
-    seenNonce.current = props.recordNonce
-    recorder.current = initialRecorder()
-    setMessage(null)
-    setRecording(true)
+    const openFromNonce = (): void => {
+      if (document.visibilityState === 'hidden') {
+        setRecording(false)
+        return
+      }
+      // Ignore the nonce that was already set when this field mounted.
+      if (seenNonce.current === props.recordNonce) return
+      seenNonce.current = props.recordNonce
+      recorder.current = initialRecorder()
+      setMessage(null)
+      setRecording(true)
+    }
+    openFromNonce()
+    document.addEventListener('visibilitychange', openFromNonce)
+    return () => document.removeEventListener('visibilitychange', openFromNonce)
   }, [props.recordNonce])
 
   useEffect(() => {

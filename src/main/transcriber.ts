@@ -5,10 +5,15 @@
 // Here : whisper.cpp `whisper-server` (pinned tag, see shared/model.ts) kept resident
 //        on 127.0.0.1 with ggml-large-v3-turbo.bin (same checkpoint, float16).
 //        `whisper-cli` is used one-shot if the server binary is missing.
+//        GPU: omit `-ng` and launch the Metal / CUDA / Vulkan binary selected in
+//        shared/speech.ts. CPU passes `-ng`. If the chosen GPU backend cannot
+//        start, we retry on CPU and set `notice` (yellow in-app note, no dialog).
+//        Whisper Small uses the same server and the same backends; only the
+//        ggml file changes (`ggml-small.bin` instead of `ggml-large-v3-turbo.bin`).
 //
 // Status machine is the same as Swift (idle → preparing(progress) → ready ⇄
 // transcribing, or error) plus `downloading` for the first-run model fetch,
-// because Electron installers don't ship the 1.6 GB weights by default.
+// because Electron installers don't ship the weights by default.
 
 import { app, net } from 'electron'
 import { EventEmitter } from 'node:events'
@@ -19,38 +24,50 @@ import os from 'node:os'
 import path from 'node:path'
 import { createServer } from 'node:net'
 import type { TranscriberStatus } from '@shared/types'
-import { cleanTranscript, cliArgs, ggmlModel, inferenceFields, serverArgs, swiftModelVariant } from '@shared/model'
+import { cleanTranscript, cliArgs, ggmlModel, ggmlWeightsFor, inferenceFields, serverArgs, swiftModelVariant, type GgmlWeights } from '@shared/model'
+import { PrefKey } from '@shared/prefs'
+import {
+  gpuFallbackNote, selectBackend, speechModelById, whisperGpuBackends, whisperLogsShowGpuFailure, whisperSmallId,
+  type BackendPlan, type EngineNotice, type SpeechModelId
+} from '@shared/speech'
 import { expectedPrepareSeconds, friendlyLoadError, isReady, machineNoun, needsSetup } from '@shared/status'
 import { encodeWav16 } from '@shared/wav'
+import { probeGpu } from './gpuProbe'
 import { paths } from './paths'
+import { prefs } from './store'
 import { run } from './proc'
+import { readWhisperManifest, resolveWhisperBin } from './speechFiles'
 
 const exe = (name: string): string => (process.platform === 'win32' ? `${name}.exe` : name)
 const noun = machineNoun(process.platform)
 
 /** Port of SpeechModelStore.looksComplete: present and plausibly full-size. */
-export function looksComplete(file: string): boolean {
+export function looksComplete(file: string, weights: GgmlWeights = ggmlModel): boolean {
   try {
     const st = fs.statSync(file)
-    return st.isFile() && st.size >= ggmlModel.approxBytes * 0.98
+    return st.isFile() && st.size >= weights.approxBytes * 0.98
   } catch {
     return false
   }
 }
 
-export function modelCandidates(): string[] {
+export function modelCandidates(weights: GgmlWeights = ggmlModel): string[] {
+  const override = process.env.FLOWA_WHISPER_MODEL?.trim() || ''
+  // The override is a path to one file. It applies only when that file is the
+  // model currently selected, so a Turbo path cannot satisfy Whisper Small.
+  const overrideOk = override && path.basename(override) === weights.fileName ? override : ''
   return [
-    process.env.FLOWA_WHISPER_MODEL?.trim() || '',
+    overrideOk,
     // Bundled with the app (like the Swift bundle's Models/ folder).
-    path.join(paths.bundledModels, ggmlModel.fileName),
+    path.join(paths.bundledModels, weights.fileName),
     // Downloaded on first run.
-    path.join(paths.downloadedModels, ggmlModel.fileName)
+    path.join(paths.downloadedModels, weights.fileName)
   ].filter(Boolean)
 }
 
 /** Port of SpeechModelStore.resolveLocalModelFolder: bundled first, then caches. */
-export function resolveModel(): string | null {
-  for (const c of modelCandidates()) if (looksComplete(c)) return c
+export function resolveModel(weights: GgmlWeights = ggmlModel): string | null {
+  for (const c of modelCandidates(weights)) if (looksComplete(c, weights)) return c
   return null
 }
 
@@ -95,11 +112,14 @@ const threads = (): number => Math.max(1, Math.min(8, (os.availableParallelism?.
 
 export class Transcriber extends EventEmitter {
   status: TranscriberStatus = { kind: 'idle' }
-  readonly modelName = swiftModelVariant
+  /** Yellow in-app note when a chosen GPU backend cannot run. */
+  notice: EngineNotice | null = null
   lastDecodeErrorMessage: string | null = null
 
   private isLoaded = false
   private loadPromise: Promise<void> | null = null
+  private loadGen = 0
+  private loadedKey = ''
   private prepareTimer: NodeJS.Timeout | null = null
   private server: ChildProcess | null = null
   private port = 0
@@ -107,6 +127,17 @@ export class Transcriber extends EventEmitter {
   private verifyOnNextLoad = false
   private modelPath: string | null = null
   private mode: 'server' | 'cli' | null = null
+  private activeModelId: SpeechModelId = 'whisper-turbo'
+  private runtime: BackendPlan | null = null
+  private whisperUseGpu = true
+
+  private weights(): GgmlWeights {
+    return ggmlWeightsFor(this.activeModelId)
+  }
+
+  get modelName(): string {
+    return this.activeModelId === whisperSmallId ? 'openai/whisper-small' : swiftModelVariant
+  }
 
   get isReady(): boolean {
     return isReady(this.status, this.isLoaded)
@@ -117,13 +148,35 @@ export class Transcriber extends EventEmitter {
   }
 
   get engineInfo(): { modelFile: string | null; binary: string | null; detail: string } {
+    const label = speechModelById(this.activeModelId).label
+    const backend = this.runtime ? ` · ${this.runtime.backend}` : ''
+    const weights = this.weights()
     const bin = resolveBinary('whisper-server') ?? resolveBinary('whisper-cli')
-    const model = this.modelPath ?? resolveModel()
+    const model = this.modelPath ?? resolveModel(weights)
     return {
       modelFile: model,
       binary: bin,
-      detail: `whisper.cpp · ${ggmlModel.fileName} (= ${swiftModelVariant})`
+      detail: `${label}${backend} · whisper.cpp ${weights.fileName}`
     }
+  }
+
+  private configKey(): string {
+    return `${prefs.get(PrefKey.speechModel)}|${prefs.get(PrefKey.hardware)}`
+  }
+
+  /** Reload when the speech model or hardware preference changes. */
+  reloadForPrefs(): void {
+    const key = this.configKey()
+    if (this.loadedKey === key && (this.isLoaded || this.status.kind === 'unavailable')) return
+    this.resetForReinstall()
+    // A model/hardware switch should not re-hash the Whisper file.
+    this.verifyOnNextLoad = false
+    void this.loadIfNeeded()
+  }
+
+  /** Fetch the selected whisper.cpp model if it is not already loaded. */
+  downloadSelectedModel(): Promise<void> {
+    return this.loadIfNeeded()
   }
 
   private setStatus(s: TranscriberStatus): void {
@@ -145,9 +198,13 @@ export class Transcriber extends EventEmitter {
 
   /** Drop the loaded engine so the next load re-prepares (Swift: resetForReinstall). */
   resetForReinstall(): void {
+    this.loadGen += 1
     this.stopPrepareProgress()
     this.killServer()
     this.isLoaded = false
+    this.loadedKey = ''
+    this.notice = null
+    this.runtime = null
     this.lastDecodeErrorMessage = null
     this.verifyOnNextLoad = true
     this.setStatus({ kind: 'idle' })
@@ -167,10 +224,40 @@ export class Transcriber extends EventEmitter {
   private async performLoad(): Promise<void> {
     this.killServer()
     this.isLoaded = false
+    this.notice = null
+    const modelId = prefs.get(PrefKey.speechModel)
+    const hardware = prefs.get(PrefKey.hardware)
+    this.activeModelId = modelId
     const started = Date.now()
     try {
-      const serverBin = resolveBinary('whisper-server')
-      const cliBin = resolveBinary('whisper-cli')
+      await this.performLoadWhisper(started)
+      this.loadedKey = `${modelId}|${hardware}`
+    } catch (e) {
+      this.stopPrepareProgress()
+      this.killServer()
+      this.isLoaded = false
+      this.loadedKey = `${modelId}|${hardware}`
+      const msg = e instanceof Error ? e.message : String(e)
+      console.error('[Flowa] speech engine FAILED:', msg, this.serverLog.slice(-5).join(' | '))
+      this.setStatus({ kind: 'error', message: friendlyLoadError(msg, noun) })
+    }
+  }
+
+  private planForActiveModel(): BackendPlan {
+    const modelId = this.activeModelId
+    const label = speechModelById(modelId).label
+    const builds = readWhisperManifest(paths.binDir, process.platform)
+    const gpu = whisperGpuBackends(builds)
+    return selectBackend(prefs.get(PrefKey.hardware), process.platform, probeGpu(), gpu, builds, label)
+  }
+
+  private async performLoadWhisper(started: number): Promise<void> {
+    const plan = this.planForActiveModel()
+    this.runtime = plan
+    this.whisperUseGpu = plan.whisperUseGpu
+    if (plan.fellBack && plan.note) this.notice = { kind: 'gpu-fallback', message: plan.note }
+    const serverBin = resolveWhisperBin(paths.binDir, plan.whisperBinary, 'server') ?? resolveBinary('whisper-server')
+      const cliBin = resolveWhisperBin(paths.binDir, plan.whisperBinary, 'cli') ?? resolveBinary('whisper-cli')
       if (!serverBin && !cliBin) {
         throw new Error(
           app.isPackaged
@@ -179,13 +266,14 @@ export class Transcriber extends EventEmitter {
         )
       }
 
-      let model = resolveModel()
+      const weights = this.weights()
+      let model = resolveModel(weights)
       if (model && this.verifyOnNextLoad && model.startsWith(paths.downloadedModels)) {
         // Self-repair: re-check the downloaded weights. A corrupt file is removed and re-fetched.
         this.startPrepareProgress()
         const sum = await sha1File(model)
         this.stopPrepareProgress()
-        if (sum !== ggmlModel.sha1) {
+        if (sum !== weights.sha1) {
           console.warn('[Flowa] model checksum mismatch, re-downloading')
           fs.rmSync(model, { force: true })
           model = null
@@ -197,30 +285,52 @@ export class Transcriber extends EventEmitter {
 
       this.startPrepareProgress()
       if (serverBin) {
-        await this.startServer(serverBin, model)
+        try {
+          await this.startServer(serverBin, model, plan.whisperUseGpu)
+        } catch (e) {
+          if (!plan.whisperUseGpu) throw e
+          console.warn('[Flowa] GPU engine failed, retrying on CPU', e)
+          this.noteGpuFallback(plan.backend === 'cpu' ? 'gpu' : plan.backend)
+          this.killServer()
+          this.whisperUseGpu = false
+          const cpuBin = resolveWhisperBin(paths.binDir, 'default', 'server') ?? serverBin
+          await this.startServer(cpuBin, model, false)
+        }
         this.mode = 'server'
+        if (plan.whisperUseGpu && this.runtime && this.runtime.backend !== 'cpu' && whisperLogsShowGpuFailure(this.serverLog.join('\n'), this.runtime.backend)) {
+          this.noteGpuFallback(this.runtime.backend)
+        }
         // Prewarm (Swift: WhisperKitConfig(prewarm: true)): one tiny inference
         // so the first real dictation doesn't pay for GPU/Metal warm-up.
         await this.inferServer(encodeWav16(new Float32Array(16_000)), 'en')
-      } else {
+      } else if (cliBin) {
         this.mode = 'cli'
+      } else {
+        throw new Error(
+          app.isPackaged
+            ? 'Speech engine is missing from this app. Reinstall Flowa from the original package.'
+            : 'Speech engine is missing (whisper.cpp not built). Run `npm run setup:whisper`.'
+        )
       }
       this.stopPrepareProgress()
       this.isLoaded = true
       this.setStatus({ kind: 'ready' })
-      console.log(`[Flowa] Whisper ready in ${Math.round((Date.now() - started) / 1000)}s (${this.mode}) from ${model}`)
-    } catch (e) {
-      this.stopPrepareProgress()
-      this.killServer()
-      this.isLoaded = false
-      const msg = e instanceof Error ? e.message : String(e)
-      console.error('[Flowa] Whisper FAILED:', msg, this.serverLog.slice(-5).join(' | '))
-      this.setStatus({ kind: 'error', message: friendlyLoadError(msg, noun) })
+    console.log(`[Flowa] Whisper ready in ${Math.round((Date.now() - started) / 1000)}s (${this.mode}, gpu=${this.whisperUseGpu}) from ${model}`)
+  }
+
+  private noteGpuFallback(requested: 'gpu' | 'metal' | 'cuda' | 'vulkan'): void {
+    const message = gpuFallbackNote(speechModelById(this.activeModelId).label, requested)
+    this.notice = { kind: 'gpu-fallback', message }
+    if (this.runtime) {
+      this.runtime = { ...this.runtime, backend: 'cpu', whisperUseGpu: false, fellBack: true, note: message }
     }
+    this.whisperUseGpu = false
+    this.emit('change')
   }
 
   private async downloadModel(): Promise<string> {
-    const dest = path.join(paths.downloadedModels, ggmlModel.fileName)
+    const weights = this.weights()
+    const dest = path.join(paths.downloadedModels, weights.fileName)
     const partial = `${dest}.partial`
     fs.mkdirSync(paths.downloadedModels, { recursive: true })
     let have = 0
@@ -230,11 +340,11 @@ export class Transcriber extends EventEmitter {
       have = 0
     }
     const headers: Record<string, string> = have > 0 ? { Range: `bytes=${have}-` } : {}
-    const res = await net.fetch(ggmlModel.url, { headers })
+    const res = await net.fetch(weights.url, { headers })
     if (!res.ok || !res.body) throw new Error(`download failed: HTTP ${res.status}`)
     if (res.status !== 206) have = 0
     const len = Number(res.headers.get('content-length') || 0)
-    const total = len > 0 ? have + len : ggmlModel.approxBytes
+    const total = len > 0 ? have + len : weights.approxBytes
     const out = fs.createWriteStream(partial, { flags: have > 0 ? 'a' : 'w' })
     let received = have
     let lastEmit = 0
@@ -257,7 +367,7 @@ export class Transcriber extends EventEmitter {
     }
     this.setStatus({ kind: 'preparing', progress: 0 })
     const sum = await sha1File(partial)
-    if (sum !== ggmlModel.sha1) {
+    if (sum !== weights.sha1) {
       fs.rmSync(partial, { force: true })
       throw new Error(`download failed: checksum mismatch (${sum})`)
     }
@@ -265,10 +375,10 @@ export class Transcriber extends EventEmitter {
     return dest
   }
 
-  private async startServer(bin: string, model: string): Promise<void> {
+  private async startServer(bin: string, model: string, useGpu: boolean): Promise<void> {
     this.port = await freePort()
     this.serverLog = []
-    const child = spawn(bin, serverArgs(model, this.port, threads()), {
+    const child = spawn(bin, serverArgs(model, this.port, threads(), useGpu), {
       windowsHide: true,
       cwd: path.dirname(bin)
     })
@@ -327,10 +437,11 @@ export class Transcriber extends EventEmitter {
   }
 
   private async inferCli(wavFile: string, language: string | null): Promise<string> {
-    const bin = resolveBinary('whisper-cli')
+    const kind = this.runtime?.whisperBinary ?? 'default'
+    const bin = resolveWhisperBin(paths.binDir, this.whisperUseGpu ? kind : 'default', 'cli') ?? resolveBinary('whisper-cli')
     if (!bin || !this.modelPath) throw new Error('Speech engine isn\'t ready yet.')
     const outBase = path.join(os.tmpdir(), `flowa-whisper-${process.pid}-${Date.now()}`)
-    const r = await run(bin, cliArgs(this.modelPath, wavFile, outBase, language, threads()), 10 * 60 * 1000)
+    const r = await run(bin, cliArgs(this.modelPath, wavFile, outBase, language, threads(), this.whisperUseGpu), 10 * 60 * 1000)
     const txt = `${outBase}.txt`
     let text = ''
     try {
@@ -349,7 +460,8 @@ export class Transcriber extends EventEmitter {
     this.lastDecodeErrorMessage = null
     await this.loadIfNeeded()
     if (!this.isLoaded) {
-      this.lastDecodeErrorMessage = this.status.kind === 'error' ? this.status.message : "Speech engine isn't ready yet."
+      this.lastDecodeErrorMessage =
+        this.status.kind === 'error' || this.status.kind === 'unavailable' ? this.status.message : "Speech engine isn't ready yet."
       return null
     }
     this.setStatus({ kind: 'transcribing' })

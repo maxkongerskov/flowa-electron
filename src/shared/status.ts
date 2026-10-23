@@ -25,6 +25,9 @@ export function needsSetup(status: TranscriberStatus, isLoaded: boolean): boolea
       return true
     case 'idle':
       return !isLoaded
+    case 'unavailable':
+      // Home stays up so the user can switch model or hardware.
+      return false
   }
 }
 
@@ -63,6 +66,7 @@ export function menuStatusText(args: {
 }): string {
   const { transcriber: t, permissions: p } = args
   if (t.kind === 'error') return 'Installation needs attention'
+  if (t.kind === 'unavailable') return 'Speech model not installed'
   if (t.kind === 'downloading') {
     const pct = t.total > 0 ? Math.floor((t.received / t.total) * 100) : 0
     return `Installing… downloading ${pct}%`
@@ -117,7 +121,7 @@ export function maxDurationStoppedMessage(maxMinutes: number): string {
 }
 
 export function modelNotReadyMessage(status: TranscriberStatus, noun: string): string {
-  if (status.kind === 'error') return status.message
+  if (status.kind === 'error' || status.kind === 'unavailable') return status.message
   if (status.kind === 'preparing' || status.kind === 'downloading') {
     return `Still installing Flowa on this ${noun}. Try again in a moment.`
   }

@@ -6,12 +6,20 @@ export interface RunResult {
   stderr: string
 }
 
+export interface RunOptions {
+  timeoutMs?: number
+  env?: NodeJS.ProcessEnv
+  cwd?: string
+}
+
 /** Run a command with argv (never a shell string). */
-export function run(command: string, args: string[], timeoutMs = 8000): Promise<RunResult> {
+export function run(command: string, args: string[], timeoutMsOrOpts: number | RunOptions = 8000): Promise<RunResult> {
+  const opts: RunOptions = typeof timeoutMsOrOpts === 'number' ? { timeoutMs: timeoutMsOrOpts } : timeoutMsOrOpts
+  const timeoutMs = opts.timeoutMs ?? 8000
   return new Promise((resolve) => {
     let child
     try {
-      child = spawn(command, args, { windowsHide: true })
+      child = spawn(command, args, { windowsHide: true, env: opts.env, cwd: opts.cwd })
     } catch (e) {
       resolve({ code: 1, stdout: '', stderr: String(e) })
       return

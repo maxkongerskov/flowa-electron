@@ -1,6 +1,8 @@
 import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
+import { isE2EBuild } from '@shared/updateTrust'
+import { userDataFolderName } from '../../scripts/update-install.mjs'
 
 /**
  * Where Flowa-Electron keeps its data. Deliberately NOT the Swift app's
@@ -9,7 +11,7 @@ import path from 'node:path'
  * Support/Flowa/recent.json; we use the same file name in our own folder.)
  */
 export function configureUserDataPath(): void {
-  app.setPath('userData', path.join(app.getPath('appData'), 'Flowa-Electron'))
+  app.setPath('userData', path.join(app.getPath('appData'), userDataFolderName(isE2EBuild())))
 }
 
 export const paths = {
@@ -56,8 +58,26 @@ export const paths = {
 }
 
 export function writeFileAtomic(file: string, data: string | Uint8Array): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const dir = path.dirname(file)
+  fs.mkdirSync(dir, { recursive: true })
   const tmp = `${file}.${process.pid}.tmp`
-  fs.writeFileSync(tmp, data)
+  const fd = fs.openSync(tmp, 'w')
+  try {
+    fs.writeFileSync(fd, data)
+    fs.fsyncSync(fd)
+  } finally {
+    fs.closeSync(fd)
+  }
   fs.renameSync(tmp, file)
+  // Flush the directory entry. Some filesystems reject a directory fsync.
+  try {
+    const dirFd = fs.openSync(dir, 'r')
+    try {
+      fs.fsyncSync(dirFd)
+    } finally {
+      fs.closeSync(dirFd)
+    }
+  } catch {
+    /* ignore */
+  }
 }

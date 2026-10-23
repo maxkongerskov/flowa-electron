@@ -52,6 +52,26 @@ func emitModifier(_ name: String, down: Bool) {
     emit(down ? "mod-down \(name)" : "mod-up \(name)")
 }
 
+func recoverDisabledTap(_ type: CGEventType) -> Bool {
+    guard type == .tapDisabledByTimeout || type == .tapDisabledByUserInput else { return false }
+    if let tap = tapBox.tap { CGEvent.tapEnable(tap: tap, enable: true) }
+    DispatchQueue.main.async {
+        fnDown = false
+        modifierDown.removeAll()
+        emit("reset")
+        if let tap = tapBox.tap {
+            if !CGEvent.tapIsEnabled(tap: tap) { emit("denied") }
+        } else {
+            emit("denied")
+        }
+    }
+    return true
+}
+
+func isPointerEvent(_ type: CGEventType) -> Bool {
+    type == .leftMouseDown || type == .rightMouseDown || type == .otherMouseDown || type == .scrollWheel
+}
+
 switch args.first ?? "" {
 case "watch-fn":
     // Exit when the parent closes our stdin (Electron quit / crash).
@@ -69,10 +89,7 @@ case "watch-fn":
     }
     let mask = CGEventMask(1 << CGEventType.flagsChanged.rawValue)
     let callback: CGEventTapCallBack = { _, type, event, _ in
-        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let tap = tapBox.tap { CGEvent.tapEnable(tap: tap, enable: true) }
-            return Unmanaged.passUnretained(event)
-        }
+        if recoverDisabledTap(type) { return Unmanaged.passUnretained(event) }
         let now = event.flags.contains(.maskSecondaryFn)
         DispatchQueue.main.async {
             if now && !fnDown { fnDown = true; emit("fn-down") }
@@ -111,11 +128,16 @@ case "watch-modifiers":
     let modMask = CGEventMask(
         (1 << CGEventType.flagsChanged.rawValue) |
         (1 << CGEventType.keyDown.rawValue) |
-        (1 << CGEventType.keyUp.rawValue)
+        (1 << CGEventType.keyUp.rawValue) |
+        (1 << CGEventType.leftMouseDown.rawValue) |
+        (1 << CGEventType.rightMouseDown.rawValue) |
+        (1 << CGEventType.otherMouseDown.rawValue) |
+        (1 << CGEventType.scrollWheel.rawValue)
     )
     let modCallback: CGEventTapCallBack = { _, type, event, _ in
-        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let tap = tapBox.tap { CGEvent.tapEnable(tap: tap, enable: true) }
+        if recoverDisabledTap(type) { return Unmanaged.passUnretained(event) }
+        if isPointerEvent(type) {
+            DispatchQueue.main.async { emit("pointer") }
             return Unmanaged.passUnretained(event)
         }
         let code = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))

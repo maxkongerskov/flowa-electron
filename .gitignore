@@ -10,7 +10,9 @@ release/
 vendor/
 resources/bin/
 
-# Model weights (~1.6 GB) are never committed. `npm run setup:model` fetches them.
+# Model weights are never committed.
+# Whisper Turbo: `npm run setup:model` → models/ggml-large-v3-turbo.bin
+# Whisper Small: `npm run setup:small` → models/ggml-small.bin
 models/*.bin
 models/*.partial
 
@@ -20,6 +22,7 @@ resources/mac/flowa-helper
 # Local env
 .env
 .env.*
+update-private.pem
 
 # TypeScript incremental + helper intermediates
 *.tsbuildinfo

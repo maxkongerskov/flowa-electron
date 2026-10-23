@@ -41,8 +41,8 @@ export async function frontmostApp(): Promise<FrontApp | null> {
   }
 }
 
-/** Long-running fn watcher. Emits 'down' / 'up'; resolves ready=false if the tap could not be created. */
-export function watchFn(onEvent: (e: 'down' | 'up') => void, onExit: (code: number | null) => void): {
+/** Long-running fn watcher. Emits 'down' / 'up' / 'reset' / 'denied'. ready=false if the tap could not be created. A later denied means the tap died after it was ready. */
+export function watchFn(onEvent: (e: 'down' | 'up' | 'reset' | 'denied') => void, onExit: (code: number | null) => void): {
   child: ChildProcessWithoutNullStreams
   ready: Promise<boolean>
 } {
@@ -50,14 +50,20 @@ export function watchFn(onEvent: (e: 'down' | 'up') => void, onExit: (code: numb
   let buf = ''
   let settle: (ok: boolean) => void = () => {}
   const ready = new Promise<boolean>((resolve) => (settle = resolve))
+  let sawReady = false
   child.stdout.on('data', (chunk: Buffer) => {
     buf += chunk.toString('utf8')
     let i: number
     while ((i = buf.indexOf('\n')) >= 0) {
       const line = buf.slice(0, i).trim()
       buf = buf.slice(i + 1)
-      if (line === 'ready') settle(true)
-      else if (line === 'denied') settle(false)
+      if (line === 'ready') {
+        sawReady = true
+        settle(true)
+      } else if (line === 'denied') {
+        if (!sawReady) settle(false)
+        else onEvent('denied')
+      } else if (line === 'reset') onEvent('reset')
       else if (line === 'fn-down') onEvent('down')
       else if (line === 'fn-up') onEvent('up')
     }

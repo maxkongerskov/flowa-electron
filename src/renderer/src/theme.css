@@ -116,3 +116,21 @@ input { font: inherit; color: inherit; }
 .progress > div { height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.2s linear; }
 
 .tip { animation: fadeIn .25s ease-in-out; }
+
+/* Quiet settings dropdowns (Speech model, Hardware). Native menu, Flowa tokens. */
+.quiet-select {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  margin: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 18px;
+  padding: 2px 16px 2px 0;
+  max-width: 220px;
+  text-align: right;
+  cursor: default;
+}
+.quiet-select:focus-visible { outline: 1px solid var(--divider); border-radius: 4px; }

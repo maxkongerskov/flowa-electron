@@ -1,10 +1,9 @@
 #!/usr/bin/env node
-// Fetch ggml-large-v3-turbo.bin (same OpenAI large-v3-turbo checkpoint, f16, as the
-// Swift app's openai_whisper-large-v3-v20240930_turbo CoreML bundle) into ./models/
-// so `electron-builder` ships it inside the app, like the Swift .app does.
-// The app itself can also download it on first run into its user-data folder.
+// Fetch a whisper.cpp ggml file into ./models/ so `electron-builder` can ship it
+// inside the app. The app can also download the same file on first use.
 //
-//   node scripts/fetch-model.mjs              → download + verify
+//   node scripts/fetch-model.mjs              → ggml-large-v3-turbo.bin (default)
+//   node scripts/fetch-model.mjs --small      → ggml-small.bin (OpenAI Whisper small)
 //   node scripts/fetch-model.mjs --link FILE  → reuse an existing copy (hard link / copy), verify
 import crypto from 'node:crypto'
 import fs from 'node:fs'
@@ -12,10 +11,23 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
-const URL_ = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin'
-const SHA1 = '4af2b29d7ec73d781377bfd1758ca957a807e941' // keep in sync with src/shared/model.ts
+// SHA-1 values match whisper.cpp v1.9.5 models/README.md and src/shared/model.ts.
+const MODELS = {
+  turbo: {
+    file: 'ggml-large-v3-turbo.bin',
+    url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin',
+    sha1: '4af2b29d7ec73d781377bfd1758ca957a807e941'
+  },
+  small: {
+    file: 'ggml-small.bin',
+    url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin',
+    sha1: '55356645c2b361a969dfd0ef2c5a50d530afd8d5'
+  }
+}
+const which = process.argv.includes('--small') ? 'small' : 'turbo'
+const { file, url: URL_, sha1: SHA1 } = MODELS[which]
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..')
-const dest = path.join(root, 'models', 'ggml-large-v3-turbo.bin')
+const dest = path.join(root, 'models', file)
 
 const sha1 = (f) =>
   new Promise((res, rej) => {
@@ -24,12 +36,13 @@ const sha1 = (f) =>
   })
 
 fs.mkdirSync(path.dirname(dest), { recursive: true })
-const linkIdx = process.argv.indexOf('--link')
-if (linkIdx > 0) {
-  const from = process.argv[linkIdx + 1]
-  try { fs.linkSync(from, dest) } catch { fs.copyFileSync(from, dest) }
-} else if (!fs.existsSync(dest)) {
-  const partial = `${dest}.partial`
+
+async function sha1Matches(file) {
+  if (!fs.existsSync(file)) return false
+  return (await sha1(file)) === SHA1
+}
+
+async function downloadTo(partial) {
   const res = await fetch(URL_)
   if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
   const total = Number(res.headers.get('content-length') || 0)
@@ -44,12 +57,32 @@ if (linkIdx > 0) {
     }
   })
   await pipeline(body, fs.createWriteStream(partial))
-  fs.renameSync(partial, dest)
   process.stdout.write('\n')
 }
-const sum = await sha1(dest)
-if (sum !== SHA1) {
-  console.error(`checksum mismatch: ${sum} (expected ${SHA1})`)
-  process.exit(1)
+
+const linkIdx = process.argv.indexOf('--link')
+if (linkIdx > 0) {
+  const from = process.argv[linkIdx + 1]
+  try { fs.linkSync(from, dest) } catch { fs.copyFileSync(from, dest) }
+  if (!(await sha1Matches(dest))) {
+    console.error(`checksum mismatch for linked file (expected ${SHA1})`)
+    process.exit(1)
+  }
+} else if (await sha1Matches(dest)) {
+  // The file on disk already matches. Leave it in place.
+} else {
+  if (fs.existsSync(dest)) {
+    console.error(`${dest} failed ${SHA1}; downloading again`)
+    fs.rmSync(dest)
+  }
+  const partial = `${dest}.partial`
+  await downloadTo(partial)
+  const partialSum = await sha1(partial)
+  if (partialSum !== SHA1) {
+    fs.rmSync(partial, { force: true })
+    console.error(`checksum mismatch: ${partialSum} (expected ${SHA1})`)
+    process.exit(1)
+  }
+  fs.renameSync(partial, dest)
 }
-console.log(`OK ${dest} sha1=${sum}`)
+console.log(`OK ${dest} sha1=${SHA1}`)

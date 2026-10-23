@@ -27,6 +27,8 @@ export class AudioCapture {
   private chunks: Float32Array[] = []
   private captureGeneration = 0
   private activeGeneration = 0
+  /** True while start() is waiting on the microphone, before isRecording flips. */
+  private opening = false
   private maxTimer: ReturnType<typeof setTimeout> | null = null
   private listeners = new Set<LevelListener>()
 
@@ -41,7 +43,8 @@ export class AudioCapture {
 
   /** Start capture. deviceId 'default' / '' = system input. */
   async start(deviceId: string, maxDurationSeconds: number | null): Promise<void> {
-    if (this.isRecording) throw new Error('Already recording')
+    if (this.isRecording || this.opening) throw new Error('Already recording')
+    this.opening = true
     this.chunks = []
     this.sessionPeakLevel = 0
     this.sessionDeviceKind = 'standard'
@@ -53,6 +56,7 @@ export class AudioCapture {
     this.maxTimer = null
 
     const live = inputsForPicker(await navigator.mediaDevices.enumerateDevices())
+    if (generation !== this.activeGeneration) throw new Error('Recording was cancelled.')
     const resolved = resolveCaptureUID(deviceId, live)
     const chosen = live.find((d) => d.uid === resolved)
 
@@ -64,9 +68,11 @@ export class AudioCapture {
     }
     if (resolved !== 'default') audio.deviceId = { exact: resolved }
 
+    let stream: MediaStream
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({ audio, video: false })
+      stream = await navigator.mediaDevices.getUserMedia({ audio, video: false })
     } catch (e) {
+      if (generation === this.activeGeneration) this.opening = false
       const name = (e as DOMException)?.name
       if (name === 'NotAllowedError' || name === 'SecurityError') {
         throw new Error('Microphone access is off for Flowa. Grant it in Settings and try again.')
@@ -76,6 +82,11 @@ export class AudioCapture {
       }
       throw new Error("Couldn't start recording. Check your microphone and try again.")
     }
+    if (generation !== this.activeGeneration) {
+      stream.getTracks().forEach((t) => t.stop())
+      throw new Error('Recording was cancelled.')
+    }
+    this.stream = stream
 
     const track = this.stream.getAudioTracks()[0]
     this.sessionDeviceKind = classifyMic(track?.label ?? chosen?.name ?? '', '', 0, resolved)
@@ -90,7 +101,11 @@ export class AudioCapture {
     }
     this.ctx = ctx
     const rate = ctx.sampleRate
-    if (rate === 0) throw new Error('Input returned an invalid format. Check that the system default input device is reachable.')
+    if (rate === 0) {
+      this.opening = false
+      this.endCaptureHardware()
+      throw new Error('Input returned an invalid format. Check that the system default input device is reachable.')
+    }
     this.source = ctx.createMediaStreamSource(this.stream)
     const bufferSize = rate > 24000 ? 1024 : 512
     this.node = ctx.createScriptProcessor(bufferSize, 1, 1)
@@ -108,7 +123,12 @@ export class AudioCapture {
     // ScriptProcessor only runs when connected to the destination; output stays silent.
     this.node.connect(ctx.destination)
     if (ctx.state === 'suspended') await ctx.resume()
+    if (generation !== this.activeGeneration) {
+      this.endCaptureHardware()
+      throw new Error('Recording was cancelled.')
+    }
     this.isRecording = true
+    this.opening = false
 
     if (maxDurationSeconds && maxDurationSeconds > 0) {
       this.maxTimer = setTimeout(() => this.forceStopForMaxDuration(), maxDurationSeconds * 1000)
@@ -132,9 +152,11 @@ export class AudioCapture {
   }
 
   cancel(): void {
-    if (!this.isRecording) return
-    this.endCaptureHardware()
+    // Also abort a start() that has not set isRecording yet, so a timed-out
+    // capture cannot leave the microphone open or stuck on "Already recording".
     this.activeGeneration = 0
+    this.opening = false
+    this.endCaptureHardware()
     this.chunks = []
   }
 

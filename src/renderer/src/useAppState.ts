@@ -5,8 +5,16 @@ export function useAppState(): AppState | null {
   const [state, setState] = useState<AppState | null>(null)
   useEffect(() => {
     let alive = true
-    void window.flowa.getState().then((s) => alive && setState(s))
-    const off = window.flowa.onState((s) => setState(s))
+    let seen = 0
+    const apply = (s: AppState): void => {
+      if (!alive || s.stateRevision < seen) return
+      seen = s.stateRevision
+      setState(s)
+    }
+    // Subscribe before the snapshot so a launch-time update push is not lost,
+    // and ignore a snapshot that is older than a push that already arrived.
+    const off = window.flowa.onState(apply)
+    void window.flowa.getState().then(apply)
     return () => {
       alive = false
       off()

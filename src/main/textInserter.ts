@@ -31,7 +31,7 @@ export type PasteOutcome =
   | { kind: 'accessibilityMissing' }
   | { kind: 'failed' }
 
-const ownBundleIds = new Set(['com.maxkongerskov.FlowaElectron', 'com.github.Electron'])
+const ownBundleIds = new Set(['com.maxkongerskov.FlowaElectron', 'com.maxkongerskov.FlowaElectron.e2e', 'com.github.Electron'])
 
 /** Frontmost app at recording start, or null if it is Flowa itself. */
 export async function captureTarget(): Promise<TargetApp | null> {

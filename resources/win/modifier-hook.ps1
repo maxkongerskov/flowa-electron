@@ -11,7 +11,13 @@ using System.Threading;
 
 public static class FlowaModifierHook {
     const int WH_KEYBOARD_LL = 13;
+    const int WH_MOUSE_LL = 14;
     const uint WM_QUIT = 0x0012;
+    const int WM_LBUTTONDOWN = 0x0201;
+    const int WM_RBUTTONDOWN = 0x0204;
+    const int WM_MBUTTONDOWN = 0x0207;
+    const int WM_MOUSEWHEEL = 0x020A;
+    const int WM_XBUTTONDOWN = 0x020B;
 
     delegate IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam);
 
@@ -45,7 +51,9 @@ public static class FlowaModifierHook {
     [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
 
     static IntPtr hook = IntPtr.Zero;
+    static IntPtr mouseHook = IntPtr.Zero;
     static HookProc proc;
+    static HookProc mouseProc;
     static uint threadId;
 
     public static void Run() {
@@ -58,6 +66,8 @@ public static class FlowaModifierHook {
             Console.WriteLine("denied");
             return;
         }
+        mouseProc = MouseCallback;
+        mouseHook = SetWindowsHookEx(WH_MOUSE_LL, mouseProc, IntPtr.Zero, 0);
         Console.WriteLine("ready");
         var stdinThread = new Thread(WatchStdin);
         stdinThread.IsBackground = true;
@@ -68,6 +78,17 @@ public static class FlowaModifierHook {
             DispatchMessage(ref msg);
         }
         UnhookWindowsHookEx(hook);
+        if (mouseHook != IntPtr.Zero) UnhookWindowsHookEx(mouseHook);
+    }
+
+    static IntPtr MouseCallback(int nCode, IntPtr wParam, IntPtr lParam) {
+        if (nCode >= 0) {
+            int msg = wParam.ToInt32();
+            if (msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN || msg == WM_MBUTTONDOWN || msg == WM_XBUTTONDOWN || msg == WM_MOUSEWHEEL) {
+                Console.WriteLine("pointer");
+            }
+        }
+        return CallNextHookEx(mouseHook, nCode, wParam, lParam);
     }
 
     static void WatchStdin() {

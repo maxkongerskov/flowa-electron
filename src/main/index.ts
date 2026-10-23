@@ -1,14 +1,14 @@
 // Flowa — Electron main process. Port of FlowaApp.swift (app root, window,
 // menu bar extra, app delegate) wiring the ported services together.
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, session, clipboard } from 'electron'
+import { app, autoUpdater, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, session, clipboard } from 'electron'
 import type { AppState } from '@shared/types'
 import { PrefKey, normalizedMicrophoneUID, sanitizedMaxDurationMinutes, type Prefs } from '@shared/prefs'
 import { defaultShortcut, needsInputMonitoring, shortcutKind, shortcutLabel, validateShortcut } from '@shared/shortcut'
 import { isEphemeralAggregateUID } from '@shared/micDeviceKind'
 import { allGranted, machineNoun, menuStatusText, trayIconName } from '@shared/status'
 import { languageDisplayName } from '@shared/languages'
-import { swiftModelVariant } from '@shared/model'
+import { isHardwarePref, isSpeechModelId, collectEngineNotices } from '@shared/speech'
 import { configureUserDataPath } from './paths'
 import { prefs } from './store'
 import { permissions } from './permissions'
@@ -22,12 +22,27 @@ import { isLoginItemEnabled, setLoginItemEnabled } from './loginItem'
 import { runRepair } from './repair'
 import { openKeyboardSettings } from './permissions'
 import { runSelfTest } from './selftest'
+import { isE2EBuild } from '@shared/updateTrust'
+import { E2E_BUNDLE_ID, RELEASE_BUNDLE_ID, isQuittingForUpdate, markQuittingForUpdate, shouldKeepWindowOpen } from '../../scripts/update-install.mjs'
+import { installE2ESession } from './e2eSession'
+import { noteE2E, UpdateChecker } from './updates'
 
 configureUserDataPath()
-app.setName('Flowa')
-if (process.platform === 'win32') app.setAppUserModelId('com.maxkongerskov.FlowaElectron')
+if (isE2EBuild()) {
+  installE2ESession()
+  app.disableHardwareAcceleration()
+  if (process.env.FLOWA_E2E_NO_SANDBOX === '1') {
+    app.commandLine.appendSwitch('no-sandbox')
+    app.commandLine.appendSwitch('disable-setuid-sandbox')
+  }
+}
+app.setName(isE2EBuild() ? 'FlowaE2E' : 'Flowa')
+if (process.platform === 'win32') app.setAppUserModelId(isE2EBuild() ? E2E_BUNDLE_ID : RELEASE_BUNDLE_ID)
 
-if (!app.requestSingleInstanceLock()) {
+// The packaged update test restarts a second copy before the first has quit.
+// Production builds still take the lock.
+const skipSingleInstance = isE2EBuild() && process.env.FLOWA_E2E_AUTO_UPDATE === '1'
+if (!skipSingleInstance && !app.requestSingleInstanceLock()) {
   app.quit()
 } else {
   void main()
@@ -35,6 +50,7 @@ if (!app.requestSingleInstanceLock()) {
 
 async function main(): Promise<void> {
   await app.whenReady()
+  noteE2E(`booted ${app.getVersion()} pid=${process.pid}`)
 
   // Only our own pages may use the microphone.
   const ours = (url: string): boolean => url.startsWith('file://') || (!!process.env.ELECTRON_RENDERER_URL && url.startsWith(process.env.ELECTRON_RENDERER_URL))
@@ -48,21 +64,32 @@ async function main(): Promise<void> {
   const bar = new FlowBar()
   const pipeline = new DictationPipeline(bar)
   const hotkey = new GlobalHotkey(pipeline, bar)
+  bar.onCrashed = () => {
+    if (hotkey.session === 'recording') hotkey.cancelListening()
+    pipeline.abortBarCrash()
+  }
   bar.onCancel = () => hotkey.cancelListening()
   bar.onCommit = () => hotkey.commitListening()
   let launchAtLogin = isLoginItemEnabled()
   let recordNonce = 0
   let menuKey = ''
+  let stateRevision = 0
 
   const showMain = (): void => {
     if (!mainWindow || mainWindow.isDestroyed()) {
       mainWindow = createMainWindow(prefs.get(PrefKey.colorSchemeDark))
       mainWindow.on('close', (e) => {
         // applicationShouldTerminateAfterLastWindowClosed → false: keep running for the hotkey + tray.
-        if (!quitting) {
+        // An update sets the quit flag before quitAndInstall, because Squirrel closes
+        // windows before `before-quit`. Hiding the window here cancels that quit.
+        if (shouldKeepWindowOpen(quitting, isQuittingForUpdate())) {
           e.preventDefault()
           mainWindow?.hide()
         }
+      })
+      mainWindow.on('hide', () => {
+        // Closing the window does not unmount the shortcut recorder, so resume here too.
+        void hotkey.resume()
       })
       mainWindow.on('focus', () => {
         void permissions.check()
@@ -74,6 +101,14 @@ async function main(): Promise<void> {
     }
     mainWindow.focus()
     if (process.platform === 'darwin') app.focus({ steal: true })
+  }
+
+  // Assigned once `broadcast` exists. Update checks must not run before that.
+  let publishState = (): void => {}
+  const updates = new UpdateChecker(() => publishState())
+  const checkForUpdates = (): void => {
+    showMain()
+    void updates.check(true)
   }
 
   const conflictStatus = (): AppState['conflict'] => {
@@ -117,11 +152,14 @@ async function main(): Promise<void> {
     const t = pipeline.transcriber
     const perms = permissions.state
     const acc = hotkey.accelerator || prefs.get(PrefKey.shortcut)
+    stateRevision += 1
     return {
+      stateRevision,
       platform: process.platform,
       machineNoun: machineNoun(process.platform),
       version: app.getVersion(),
       prefs: prefs.all,
+      prefsWarning: prefs.warning,
       permissions: perms,
       allGranted: allGranted(perms),
       conflict: conflictStatus(),
@@ -141,7 +179,9 @@ async function main(): Promise<void> {
         active: hotkey.isAuthorized,
         recordNonce
       },
-      engine: { modelName: swiftModelVariant, ...t.engineInfo }
+      engine: { modelName: t.modelName, ...t.engineInfo },
+      engineNotices: collectEngineNotices(t.notice),
+      update: updates.state
     }
   }
 
@@ -195,6 +235,7 @@ async function main(): Promise<void> {
     onReinstall: confirmReinstall,
     onRepair: confirmRepair,
     onQuit: quit,
+    onCheckForUpdates: checkForUpdates,
     onShortcut: (shortcut) => void applyShortcut(shortcut),
     onRecordShortcut: recordShortcut,
     onResetShortcut: () => void applyShortcut(defaultShortcut(process.platform))
@@ -231,6 +272,7 @@ async function main(): Promise<void> {
         onReinstall: confirmReinstall,
         onRepair: confirmRepair,
         onQuit: quit,
+        onCheckForUpdates: checkForUpdates,
         onShortcut: (shortcut) => void applyShortcut(shortcut),
         onRecordShortcut: recordShortcut,
         onResetShortcut: () => void applyShortcut(defaultShortcut(process.platform))
@@ -242,6 +284,7 @@ async function main(): Promise<void> {
       }
     })
   }
+  publishState = broadcast
 
   const installAppMenu = (): void => {
     const dictation = dictationShortcutMenu(shortcutMenuArgs())
@@ -251,7 +294,7 @@ async function main(): Promise<void> {
           { role: 'appMenu' },
           dictation,
           { role: 'editMenu' },
-          { label: 'Window', submenu: [{ label: 'Show Flowa', accelerator: 'Command+0', click: showMain }, { role: 'minimize' }, { role: 'close' }] }
+          { label: 'Window', submenu: [{ label: 'Show Flowa', accelerator: 'Command+0', click: showMain }, { label: 'Check for Updates…', click: checkForUpdates }, { role: 'minimize' }, { role: 'close' }] }
         ])
       )
     } else {
@@ -262,6 +305,7 @@ async function main(): Promise<void> {
             label: 'Flowa',
             submenu: [
               { label: 'Show Flowa', accelerator: 'CommandOrControl+0', click: showMain },
+              { label: 'Check for Updates…', click: checkForUpdates },
               { type: 'separator' },
               { label: 'Quit Flowa', accelerator: 'CommandOrControl+Q', click: quit }
             ]
@@ -292,7 +336,10 @@ async function main(): Promise<void> {
     }
   })
   fnConflict.on('change', broadcast)
-  prefs.on('change', broadcast)
+  prefs.on('change', (key: string) => {
+    if (key === PrefKey.hardware || key === PrefKey.speechModel) pipeline.transcriber.reloadForPrefs()
+    broadcast()
+  })
 
   // RootView.syncFirstRunWithTranscriber
   pipeline.transcriber.on('change', () => {
@@ -332,6 +379,12 @@ async function main(): Promise<void> {
         break
       case PrefKey.shortcut:
         return applyShortcut(value)
+      case PrefKey.hardware:
+        if (isHardwarePref(value)) prefs.set(key, value)
+        break
+      case PrefKey.speechModel:
+        if (isSpeechModelId(value)) prefs.set(key, value)
+        break
     }
   })
 
@@ -353,6 +406,7 @@ async function main(): Promise<void> {
     dismissError: () => pipeline.dismissError(),
     reinstallSpeechModel: () => pipeline.reinstallSpeechModel(),
     retryInstall: () => pipeline.transcriber.loadIfNeeded(),
+    downloadSpeechModel: () => pipeline.transcriber.downloadSelectedModel(),
     setLaunchAtLogin: (v) => {
       if (typeof v !== 'boolean') return
       setLoginItemEnabled(v)
@@ -389,7 +443,10 @@ async function main(): Promise<void> {
       }),
     reloadShortcut: () => hotkey.restart(),
     suspendShortcut: () => hotkey.suspend(),
-    resumeShortcut: () => hotkey.resume()
+    resumeShortcut: () => hotkey.resume(),
+    checkForUpdates: () => checkForUpdates(),
+    openUpdate: () => updates.accept(),
+    dismissUpdateNote: () => updates.dismissNote()
   }
 
   ipcMain.handle('action', async (e, name: unknown, ...args: unknown[]) => {
@@ -407,6 +464,14 @@ async function main(): Promise<void> {
   app.on('window-all-closed', () => {
     /* keep running in the tray */
   })
+  const beginQuit = (): void => {
+    quitting = true
+    markQuittingForUpdate()
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.removeAllListeners('close')
+    }
+  }
+  autoUpdater.on('before-quit-for-update', beginQuit)
   app.on('before-quit', () => {
     quitting = true
   })
@@ -442,5 +507,6 @@ async function main(): Promise<void> {
   }
   pipeline.prewarm()
   broadcast()
+  void updates.check(false)
   void runSelfTest(pipeline, bar)
 }

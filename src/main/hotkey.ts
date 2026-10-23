@@ -105,7 +105,13 @@ export class GlobalHotkey extends EventEmitter {
         return
       }
       const { child, ready } = watchFn(
-        (e) => (e === 'down' ? this.handleFnPressed() : (this.fnDown = false)),
+        (e) => {
+          if (e === 'down') this.handleFnPressed()
+          else if (e === 'denied') {
+            this.fnDown = false
+            this.setAuthorized(false)
+          } else this.fnDown = false
+        },
         () => {
           if (this.fnChild === child) {
             this.fnChild = null
@@ -133,6 +139,11 @@ export class GlobalHotkey extends EventEmitter {
       const handle = watchModifier(
         (line) => {
           if (this.modWatch !== handle || this.accelerator !== shortcut) return
+          if (line === 'denied') {
+            this.modState = initialModWatch()
+            this.setAuthorized(false)
+            return
+          }
           const step = modifierWatchStep(this.modState, line, shortcut)
           this.modState = step.state
           if (step.fire) this.handlePress()

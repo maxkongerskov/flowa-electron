@@ -12,5 +12,6 @@
     "paths": { "@shared/*": ["src/shared/*"] },
     "composite": true
   },
-  "include": ["electron.vite.config.ts", "vitest.config.ts", "src/main/**/*", "src/preload/**/*", "src/shared/**/*", "tests/**/*"]
+  "include": ["electron.vite.config.ts", "vitest.config.ts", "src/main/**/*", "src/preload/**/*", "src/shared/**/*", "tests/**/*"],
+  "exclude": ["tests/audio-capture.test.ts"]
 }
