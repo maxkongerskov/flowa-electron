@@ -91,9 +91,11 @@ jobs:
             --require-vulkan
       - name: Packaged app picks Vulkan, then CPU
         run: |
-          app="$(find release/linux-unpacked -maxdepth 1 -type f -executable | head -1)"
+          # chrome-sandbox and libvulkan.so.1 are also executable. find | head
+          # can launch one of those, which segfaults before Flowa logs anything.
+          app=release/linux-unpacked/flowa
           icd="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' | head -1)"
-          test -n "$app"
+          test -x "$app"
           test -n "$icd"
           Xvfb :98 -screen 0 1280x800x24 >/tmp/xvfb.log 2>&1 &
           sleep 0.4
@@ -154,6 +156,18 @@ jobs:
           if (-not (Test-Path "$sdk\Bin\glslc.exe")) { Write-Error "glslc missing under $sdk"; exit 1 }
           "VULKAN_SDK=$sdk" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "$sdk\Bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+      - name: Install SPIRV-Headers for the Vulkan SDK
+        shell: pwsh
+        run: |
+          # The silent SDK install provides glslc but not SPIRV-HeadersConfig.cmake,
+          # which ggml's Vulkan backend requires.
+          $tag = "vulkan-sdk-1.3.296.0"
+          git clone --depth 1 --branch $tag https://github.com/KhronosGroup/SPIRV-Headers.git "$env:TEMP\SPIRV-Headers"
+          cmake -S "$env:TEMP\SPIRV-Headers" -B "$env:TEMP\SPIRV-Headers\build" -DCMAKE_INSTALL_PREFIX="$env:VULKAN_SDK"
+          cmake --install "$env:TEMP\SPIRV-Headers\build"
+          $config = Get-ChildItem "$env:VULKAN_SDK" -Recurse -Filter SPIRV-HeadersConfig.cmake | Select-Object -First 1
+          if (-not $config) { Write-Error "SPIRV-HeadersConfig.cmake was not installed under $env:VULKAN_SDK"; exit 1 }
+          Write-Host $config.FullName
       - name: Build Vulkan engine
         shell: pwsh
         run: |
