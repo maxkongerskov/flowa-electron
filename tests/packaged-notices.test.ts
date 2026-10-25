@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { installerKind } from '../scripts/verify-packaged-notices.mjs'
 
 const require = createRequire(import.meta.url)
 const yaml = require('js-yaml') as { load: (source: string) => BuilderConfig }
@@ -45,6 +46,17 @@ function shippedSources(config: BuilderConfig, platform: BuilderConfig | undefin
 }
 
 describe('packaged license notices', () => {
+  it('recognises the installer names electron-builder actually writes', () => {
+    expect(installerKind('Flowa-1.2.2-arm64.dmg')).toBe('dmg-arm64')
+    expect(installerKind('Flowa-1.2.2.dmg')).toBe('dmg-x64')
+    expect(installerKind('Flowa-1.2.2-x64.dmg')).toBe('dmg-x64')
+    expect(installerKind('Flowa-1.2.2-arm64.dmg.blockmap')).toBe(null)
+    expect(installerKind('Flowa-Setup-1.2.2-x64.exe')).toBe('nsis-x64')
+    expect(installerKind('Flowa-Setup-1.2.2-arm64.exe')).toBe('nsis-arm64')
+    expect(installerKind('Flowa-1.2.2.AppImage')).toBe('appimage')
+    expect(installerKind('flowa_1.2.2_amd64.deb')).toBe('deb')
+  })
+
   const yml = yaml.load(readFileSync(path.join(root, 'electron-builder.yml'), 'utf8'))
   const release = require(path.join(root, 'electron-builder.release.cjs')) as BuilderConfig
 

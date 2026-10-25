@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process'
 import { createReadStream, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const expected = {
@@ -17,13 +17,23 @@ const expected = {
   'THIRD_PARTY_NOTICES.md': readFileSync(path.join(root, 'THIRD_PARTY_NOTICES.md'))
 }
 
+// electron-builder leaves the x64 suffix off the default arch, so the Intel dmg
+// from `electron-builder --mac` is Flowa-<version>.dmg. An explicit -x64 name
+// (the release config) is the same installer.
 const kinds = {
   'dmg-arm64': (name) => name.endsWith('-arm64.dmg'),
-  'dmg-x64': (name) => name.endsWith('-x64.dmg'),
+  'dmg-x64': (name) => name.endsWith('.dmg') && !name.endsWith('-arm64.dmg'),
   'nsis-x64': (name) => name.endsWith('-x64.exe'),
   'nsis-arm64': (name) => name.endsWith('-arm64.exe'),
   appimage: (name) => name.endsWith('.AppImage'),
   deb: (name) => name.endsWith('.deb')
+}
+
+export function installerKind(name) {
+  for (const [kind, match] of Object.entries(kinds)) {
+    if (match(name)) return kind
+  }
+  return null
 }
 
 function parseArgs(argv) {
@@ -177,7 +187,7 @@ function shippedCopies(rootDir) {
 
 function artifacts(dir, kind) {
   const names = existsSync(dir) ? readdirSync(dir).filter((name) => statSync(path.join(dir, name)).isFile()) : []
-  return names.filter((name) => kinds[kind](name)).sort()
+  return names.filter((name) => installerKind(name) === kind).sort()
 }
 
 async function verifyOne(dir, kind) {
@@ -221,7 +231,10 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err instanceof Error ? err.message : err)
-  process.exit(1)
-})
+const invokedDirectly = process.argv[1] != null && import.meta.url === pathToFileURL(process.argv[1]).href
+if (invokedDirectly) {
+  main().catch((err) => {
+    console.error(err instanceof Error ? err.message : err)
+    process.exit(1)
+  })
+}
