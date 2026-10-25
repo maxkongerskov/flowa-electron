@@ -343,7 +343,14 @@ export class Transcriber extends EventEmitter {
     console.warn(`[Flowa] ${message}`)
     this.notice = { kind: 'gpu-fallback', message }
     if (this.runtime) {
-      this.runtime = { ...this.runtime, backend: 'cpu', whisperUseGpu: false, fellBack: true, note: message }
+      this.runtime = {
+        ...this.runtime,
+        backend: 'cpu',
+        whisperBinary: 'default',
+        whisperUseGpu: false,
+        fellBack: true,
+        note: message
+      }
     }
     this.whisperUseGpu = false
     this.emit('change')
