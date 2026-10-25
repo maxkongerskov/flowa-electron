@@ -9,7 +9,8 @@ import { isEphemeralAggregateUID } from '@shared/micDeviceKind'
 import { allGranted, machineNoun, menuStatusText, trayIconName } from '@shared/status'
 import { languageDisplayName } from '@shared/languages'
 import { isHardwarePref, isSpeechModelId, collectEngineNotices } from '@shared/speech'
-import { configureUserDataPath } from './paths'
+import { configureUserDataPath, paths } from './paths'
+import { clearVulkanAutoSkip } from './vulkanSkip'
 import { prefs } from './store'
 import { permissions } from './permissions'
 import { fnConflict } from './fnConflict'
@@ -380,7 +381,11 @@ async function main(): Promise<void> {
       case PrefKey.shortcut:
         return applyShortcut(value)
       case PrefKey.hardware:
-        if (isHardwarePref(value)) prefs.set(key, value)
+        if (isHardwarePref(value)) {
+          // A new choice is allowed to try Vulkan again, including re-selecting automatic.
+          clearVulkanAutoSkip(paths.userData)
+          prefs.set(key, value)
+        }
         break
       case PrefKey.speechModel:
         if (isSpeechModelId(value)) prefs.set(key, value)

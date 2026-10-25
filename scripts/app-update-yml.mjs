@@ -18,7 +18,7 @@ const yaml = require('js-yaml')
 export const APP_UPDATE_FIELDS = {
   provider: 'github',
   owner: 'maxkongerskov',
-  repo: 'flowa-electron',
+  repo: 'flowa-releases',
   updaterCacheDirName: 'flowa-updater'
 }
 

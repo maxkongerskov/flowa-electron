@@ -7,7 +7,7 @@ copyright: Copyright © 2026 Max Køngerskov
 publish:
   provider: github
   owner: maxkongerskov
-  repo: flowa-electron
+  repo: flowa-releases
 directories:
   output: release
   buildResources: build

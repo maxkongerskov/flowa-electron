@@ -3,7 +3,7 @@
 
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
-import { vulkanSummaryHasGpu, type GpuProbe } from '@shared/speech'
+import { vulkanSummaryIsUsable, type GpuProbe } from '@shared/speech'
 import { commandExists } from './proc'
 
 function flag(env: NodeJS.ProcessEnv, name: string, fallback: boolean): boolean {
@@ -51,12 +51,9 @@ function readVulkanInfoSummary(): string | null {
 
 function vulkanPresent(platform: string): boolean {
   if (!vulkanLoaderPresent(platform)) return false
-  const summary = readVulkanInfoSummary()
-  if (summary == null) return true
-  const usable = vulkanSummaryHasGpu(summary)
-  // Software Vulkan (lavapipe) is a CPU device. ggml will not use it, and it is
-  // slower than the CPU engine, so automatic mode stays on CPU.
-  return usable !== false
+  // A missing vulkaninfo means try Vulkan. CPU devices and named software
+  // stacks (lavapipe, llvmpipe, SwiftShader, Basic Render, WARP) stay on CPU.
+  return vulkanSummaryIsUsable(readVulkanInfoSummary())
 }
 
 export function probeGpu(env: NodeJS.ProcessEnv = process.env, platform: string = process.platform): GpuProbe {

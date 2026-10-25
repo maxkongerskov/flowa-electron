@@ -27,7 +27,8 @@ import type { TranscriberStatus } from '@shared/types'
 import { cleanTranscript, cliArgs, ggmlModel, ggmlWeightsFor, inferenceFields, modelOverridePath, serverArgs, swiftModelVariant, type GgmlWeights } from '@shared/model'
 import { PrefKey } from '@shared/prefs'
 import {
-  gpuFallbackNote, selectBackend, speechModelById, whisperGpuBackends, whisperLogsShowGpuFailure, whisperSmallId,
+  gpuFallbackNote, selectBackend, speechModelById, VULKAN_FIRST_INFER_MS, VULKAN_READY_MS, vulkanSkipReason,
+  whisperGpuBackends, whisperLogsShowGpuFailure, whisperSmallId,
   type BackendPlan, type EngineNotice, type SpeechModelId
 } from '@shared/speech'
 import { expectedPrepareSeconds, friendlyLoadError, isReady, machineNoun, needsSetup } from '@shared/status'
@@ -37,6 +38,7 @@ import { paths } from './paths'
 import { prefs } from './store'
 import { run } from './proc'
 import { readWhisperManifest, resolveWhisperBin, whisperLibraryEnv } from './speechFiles'
+import { clearVulkanAutoSkip, readVulkanAutoSkip, writeVulkanAutoSkip } from './vulkanSkip'
 
 const exe = (name: string): string => (process.platform === 'win32' ? `${name}.exe` : name)
 const noun = machineNoun(process.platform)
@@ -263,7 +265,12 @@ export class Transcriber extends EventEmitter {
     const label = speechModelById(modelId).label
     const builds = readWhisperManifest(paths.binDir, process.platform)
     const gpu = whisperGpuBackends(builds)
-    return selectBackend(prefs.get(PrefKey.hardware), process.platform, probeGpu(), gpu, builds, label)
+    const hardware = prefs.get(PrefKey.hardware)
+    const remembered = hardware === 'gpu' ? readVulkanAutoSkip(paths.userData) : null
+    if (remembered) {
+      console.log(`[Flowa] automatic Vulkan skipped (${remembered}); staying on CPU until Hardware is changed`)
+    }
+    return selectBackend(hardware, process.platform, probeGpu(), gpu, builds, label, remembered !== null)
   }
 
   private async performLoadWhisper(started: number): Promise<void> {
@@ -302,19 +309,29 @@ export class Transcriber extends EventEmitter {
       this.startPrepareProgress()
       if (serverBin) {
         const cpuBin = resolveWhisperBin(paths.binDir, 'default', 'server') ?? resolveBinary('whisper-server') ?? serverBin
+        const readyMs = plan.backend === 'vulkan' ? VULKAN_READY_MS : plan.whisperUseGpu ? GPU_START_MS : CPU_START_MS
+        const prewarmMs = plan.backend === 'vulkan' ? VULKAN_FIRST_INFER_MS : plan.whisperUseGpu ? GPU_PREWARM_MS : CPU_PREWARM_MS
+        let phase: 'ready' | 'transcribe' = 'ready'
         try {
           console.log(`[Flowa] launching ${plan.backend} ${serverBin}`)
-          await this.startServer(serverBin, model, plan.whisperUseGpu, plan.whisperUseGpu ? GPU_START_MS : CPU_START_MS)
+          await this.startServer(serverBin, model, plan.whisperUseGpu, readyMs)
           if (plan.whisperUseGpu && this.runtime && this.runtime.backend !== 'cpu' && whisperLogsShowGpuFailure(this.serverLog.join('\n'), this.runtime.backend)) {
             throw new Error(`GPU backend did not initialize: ${this.serverLog.slice(-3).join(' ')}`)
           }
           // Prewarm (Swift: WhisperKitConfig(prewarm: true)): one tiny inference
           // so the first real dictation doesn't pay for GPU/Metal warm-up.
-          await this.inferServer(encodeWav16(new Float32Array(16_000)), 'en', plan.whisperUseGpu ? GPU_PREWARM_MS : CPU_PREWARM_MS)
+          phase = 'transcribe'
+          await this.inferServer(encodeWav16(new Float32Array(16_000)), 'en', prewarmMs)
+          if (plan.backend === 'vulkan') clearVulkanAutoSkip(paths.userData)
         } catch (e) {
           if (!plan.whisperUseGpu) throw e
           console.warn('[Flowa] GPU engine failed, retrying on CPU', e instanceof Error ? e.message : e)
           console.warn(`[Flowa] GPU logs: ${this.serverLog.slice(-8).join(' | ') || '(none)'}`)
+          if (plan.backend === 'vulkan') {
+            const reason = vulkanSkipReason(phase, e)
+            writeVulkanAutoSkip(paths.userData, reason)
+            console.warn(`[Flowa] Vulkan ${reason}; automatic mode will stay on CPU until Hardware is changed`)
+          }
           this.noteGpuFallback(plan.backend === 'cpu' ? 'gpu' : plan.backend)
           this.killServer()
           this.whisperUseGpu = false

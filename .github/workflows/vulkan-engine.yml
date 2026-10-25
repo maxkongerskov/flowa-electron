@@ -89,8 +89,11 @@ jobs:
             --model /tmp/ggml-tiny.en.bin \
             --wav tests/fixtures/quick_brown_fox.wav \
             --require-vulkan
-      - name: Packaged app picks Vulkan, then CPU
+      - name: Packaged app, forced Vulkan then forced CPU
         run: |
+          # FLOWA_GPU_VULKAN=1 forces Vulkan even when the only device is
+          # lavapipe. That is not automatic mode. The next step leaves the
+          # override unset and must stay on CPU. This forced run is slow.
           # chrome-sandbox and libvulkan.so.1 are also executable. find | head
           # can launch one of those, which segfaults before Flowa logs anything.
           app=release/linux-unpacked/flowa
@@ -124,6 +127,35 @@ jobs:
           echo '--- packaged cpu fallback ---'
           cat /tmp/app-cpu.log
           grep -E 'backend=cpu|speech plan: backend=cpu' /tmp/app-cpu.log
+      - name: Automatic mode stays on CPU when lavapipe is the only device
+        run: |
+          app=release/linux-unpacked/flowa
+          icd="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' | head -1)"
+          test -x "$app"
+          test -n "$icd"
+          if ! pgrep -f 'Xvfb :98' >/dev/null; then
+            Xvfb :98 -screen 0 1280x800x24 >/tmp/xvfb.log 2>&1 &
+            sleep 0.4
+          fi
+          DISPLAY=:98 VK_DRIVER_FILES="$icd" VK_ICD_FILENAMES="$icd" vulkaninfo --summary > /tmp/vulkan-summary.txt
+          grep -E 'PHYSICAL_DEVICE_TYPE_CPU|llvmpipe|lavapipe' /tmp/vulkan-summary.txt
+          # No FLOWA_GPU_VULKAN and no GGML_VK_VISIBLE_DEVICES.
+          DISPLAY=:98 \
+          FLOWA_PACKAGED_SMOKE=1 \
+          VK_DRIVER_FILES="$icd" \
+          VK_ICD_FILENAMES="$icd" \
+          FLOWA_WHISPER_MODEL=/tmp/ggml-tiny.en.bin \
+          FLOWA_SELFTEST="transcribe:${PWD}/tests/fixtures/quick_brown_fox.wav" \
+          FLOWA_SELFTEST_LANG=en \
+          FLOWA_SELFTEST_QUIT=1 \
+            "$app" --no-sandbox > /tmp/app-auto.log 2>&1 || true
+          echo '--- packaged automatic lavapipe ---'
+          cat /tmp/app-auto.log
+          grep 'speech plan: backend=cpu' /tmp/app-auto.log
+          if grep 'speech plan: backend=vulkan' /tmp/app-auto.log; then
+            echo 'automatic mode selected Vulkan on lavapipe' >&2
+            exit 1
+          fi
       - name: Upload Vulkan engine
         uses: actions/upload-artifact@v4
         with:

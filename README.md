@@ -99,7 +99,7 @@ Before that command will succeed:
 - a clean git tree, on a branch
 - Developer ID `0EF5E5C4F619F8322BB10EE8255603A26AB18553` in the keychain (`security find-identity`), or set `FLOWA_SIGN_ID`
 - notarytool keychain profile `AC_PASSWORD` (`xcrun notarytool history --keychain-profile AC_PASSWORD`), or set `FLOWA_NOTARY_PROFILE`
-- `gh auth status` for `maxkongerskov/flowa-electron`
+- `gh auth status` for `maxkongerskov/flowa-releases`, and for `maxkongerskov/flowa-electron` when publishing 1.2.3
 - staged engines `resources/bin/{darwin-arm64,darwin-x64,win32-x64,linux-x64}/`
 - the Vulkan engines from the **Vulkan whisper engine** workflow, placed at
   `resources/bin/win32-x64/whisper-server-vulkan/` and
@@ -205,6 +205,12 @@ Linux is
 `.github/workflows/e2e-update-windows.yml` (no secrets). Neither rehearsal
 publishes a release. The real 1.2.2 → 1.2.3 update still has to be run on a
 Mac, a Windows machine, and a Linux machine before `npm run release` publishes.
+
+1.2.3 is the bridge release. The app it installs checks `maxkongerskov/flowa-releases`.
+`scripts/publish-release.sh` also uploads that same 1.2.3 to `maxkongerskov/flowa-electron`,
+which is the feed baked into 1.2.2. Later versions upload to `flowa-releases` only.
+Create the public repo, check 1.2.2 → 1.2.3 → a throwaway 1.2.4, and roll a bad 1.2.3
+back, using `RELEASING.md`. This branch does not create the repo or publish.
 
 Clearing recent dictations rewrites `recent.json`. It does not erase copies already in
 APFS snapshots or Time Machine.
@@ -317,10 +323,12 @@ Home has two dropdowns, stored in `prefs.json` with the same pattern as the othe
 |---|---|
 | macOS | Apple Metal, when the whisper.cpp binary was built with Metal (the default `npm run setup:whisper` on a Mac) |
 | Windows / Linux with an NVIDIA driver | NVIDIA CUDA, when `whisper-server-cuda` is staged |
-| Windows / Linux otherwise | Vulkan, when `resources/bin/<os>-<arch>/whisper-server-vulkan/` is installed and `vulkaninfo` reports a GPU that is not a CPU device (lavapipe). A Vulkan loader with no usable GPU, or a Vulkan process that exits or logs `No devices found`, falls back to the CPU engine. |
+| Windows / Linux otherwise | Vulkan, when `whisper-server-vulkan/` is installed and `vulkaninfo` reports a real GPU. CPU devices and software implementations (lavapipe, llvmpipe, SwiftShader, Microsoft Basic Render, WARP) stay on the CPU engine. |
 | Anything else | CPU |
 
 Picking Metal, CUDA, or Vulkan directly uses that backend. When it isn't staged, or the process fails to start on it, Flowa retries on the CPU and shows a quiet yellow note on Home (the same warning banner as the other in-app status text). There is no dialog and no system notification. Choosing CPU skips the GPU attempt and shows no note.
+
+Vulkan has a shorter budget than the other GPU backends: the server must accept a connection within 60 seconds, and the one-second prewarm must finish within 30 seconds. A miss, a crash, or a log that says the GPU did not come up switches that launch to the CPU engine and writes `vulkan-auto-skip.json` in the app's data folder. Automatic mode keeps using the CPU until Hardware is changed. Choosing Hardware again, including choosing GPU (automatic) once more, deletes that file. A Vulkan start that succeeds deletes it too.
 
 Whisper uses whisper.cpp v1.9.5. `-ng` forces CPU. CUDA and Vulkan are extra binaries so one `resources/bin` folder can hold more than one backend. Vulkan is the directory `whisper-server-vulkan/` (its own `whisper-server`, `whisper-cli`, and ggml libraries) because those file names are the same as the CPU engine's. A flat `whisper-server-vulkan` binary from `FLOWA_WHISPER_VARIANT=vulkan` on an older build is still accepted. `whisper-backends.json` records what was staged. The speech-model dropdown only changes the `-m` file passed to that binary.
 
@@ -435,5 +443,6 @@ MIT (same as Swift-Flowa). whisper.cpp is MIT. The Whisper weights are MIT (Open
 6. **Version number.** App version is 1.2.3 (`package.json`). `npm run release -- 1.2.3` publishes
    that version after tests and a packaged update rehearsal on the release Mac. It does not
    publish until that command is run, and this branch does not tag or upload a GitHub Release.
-   `npm run release -- patch` would publish the next patch instead. The download table above
-   stays on the last installers that were actually published.
+   The feed baked into 1.2.3 is `maxkongerskov/flowa-releases`. The bridge upload and rollback
+   are in `RELEASING.md`. `npm run release -- patch` would publish the next patch instead. The
+   download table above stays on the last installers that were actually published.

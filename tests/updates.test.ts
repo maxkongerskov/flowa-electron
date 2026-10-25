@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   UPDATE_CHECK_FAILED,
   UPDATE_CHECK_UNPACKAGED,
+  UPDATE_BRIDGE_REPOSITORY,
   UPDATE_REPOSITORY,
   assetDownloadUrl,
   buildUpdateOffer,
@@ -54,13 +55,16 @@ describe('semver', () => {
 })
 
 describe('installer link', () => {
-  it('points at flowa-electron, not the homepage repo', () => {
-    expect(releasePageUrl('v1.3.0')).toBe('https://github.com/maxkongerskov/flowa-electron/releases/tag/v1.3.0')
+  it('points at flowa-releases, and still accepts the 1.2.2 bridge repo', () => {
+    expect(UPDATE_REPOSITORY).toEqual({ owner: 'maxkongerskov', repo: 'flowa-releases' })
+    expect(UPDATE_BRIDGE_REPOSITORY).toEqual({ owner: 'maxkongerskov', repo: 'flowa-electron' })
+    expect(releasePageUrl('v1.3.0')).toBe('https://github.com/maxkongerskov/flowa-releases/releases/tag/v1.3.0')
     expect(assetDownloadUrl('1.3.0', 'Flowa-1.3.0-arm64.dmg')).toBe(
-      'https://github.com/maxkongerskov/flowa-electron/releases/download/v1.3.0/Flowa-1.3.0-arm64.dmg'
+      'https://github.com/maxkongerskov/flowa-releases/releases/download/v1.3.0/Flowa-1.3.0-arm64.dmg'
     )
     expect(isFlowaReleaseUrl(releasePageUrl('1.3.0'))).toBe(true)
-    expect(isFlowaReleaseUrl('http://github.com/maxkongerskov/flowa-electron/releases/tag/v1.3.0')).toBe(false)
+    expect(isFlowaReleaseUrl('https://github.com/maxkongerskov/flowa-electron/releases/download/v1.2.3/Flowa-1.2.3.AppImage')).toBe(true)
+    expect(isFlowaReleaseUrl('http://github.com/maxkongerskov/flowa-releases/releases/tag/v1.3.0')).toBe(false)
     expect(isFlowaReleaseUrl('https://github.com/maxkongerskov/Flowa/releases/tag/v1.3.0')).toBe(false)
     expect(isFlowaReleaseUrl('https://example.com')).toBe(false)
   })
@@ -71,7 +75,7 @@ describe('installer link', () => {
   })
 
   it('uses the channel file when it names the right asset', () => {
-    expect(pickInstallerName('darwin', 'x64', '1.3.0', ['https://github.com/maxkongerskov/flowa-electron/releases/download/v1.3.0/Flowa-1.3.0-x64.dmg'])).toBe(
+    expect(pickInstallerName('darwin', 'x64', '1.3.0', ['https://github.com/maxkongerskov/flowa-releases/releases/download/v1.3.0/Flowa-1.3.0-x64.dmg'])).toBe(
       'Flowa-1.3.0-x64.dmg'
     )
     expect(pickInstallerName('win32', 'x64', '1.3.0', ['Flowa-Setup-1.3.0-x64.exe'])).toBe('Flowa-Setup-1.3.0-x64.exe')
@@ -116,9 +120,9 @@ describe('interpretUpdateCheck', () => {
       kind: 'available',
       version: '1.3.0',
       notes: 'Shorter startup.',
-      releaseUrl: 'https://github.com/maxkongerskov/flowa-electron/releases/tag/v1.3.0',
+      releaseUrl: 'https://github.com/maxkongerskov/flowa-releases/releases/tag/v1.3.0',
       downloadName: 'Flowa-1.3.0-arm64.dmg',
-      downloadUrl: 'https://github.com/maxkongerskov/flowa-electron/releases/download/v1.3.0/Flowa-1.3.0-arm64.dmg'
+      downloadUrl: 'https://github.com/maxkongerskov/flowa-releases/releases/download/v1.3.0/Flowa-1.3.0-arm64.dmg'
     })
     expect(
       interpretUpdateCheck({
@@ -325,11 +329,14 @@ describe('in-app install', () => {
 })
 
 describe('electron-builder publish', () => {
-  it('targets maxkongerskov/flowa-electron', () => {
+  it('targets maxkongerskov/flowa-releases', () => {
     const yml = readFileSync(resolve(process.cwd(), 'electron-builder.yml'), 'utf8')
     expect(yml).toMatch(/provider:\s*github/)
     expect(yml).toContain(`owner: ${UPDATE_REPOSITORY.owner}`)
     expect(yml).toContain(`repo: ${UPDATE_REPOSITORY.repo}`)
+    expect(yml).not.toContain('repo: flowa-electron')
     expect(yml).not.toContain('repo: Flowa')
+    const appUpdate = readFileSync(resolve(process.cwd(), 'scripts/app-update-yml.mjs'), 'utf8')
+    expect(appUpdate).toContain(`repo: '${UPDATE_REPOSITORY.repo}'`)
   })
 })
