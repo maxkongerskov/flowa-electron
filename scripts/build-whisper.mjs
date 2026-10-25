@@ -97,7 +97,8 @@ if (wantVulkan && process.env.VULKAN_SDK) {
   const found = cache.match(/^Vulkan_INCLUDE_DIR:[^=]*=(.*)$/m)
   const include = path.resolve(process.env.VULKAN_SDK, 'include')
   const picked = found ? path.resolve(found[1].trim()) : ''
-  if (picked !== include) {
+  // The Windows SDK directory is Include. path.resolve does not match that casing.
+  if (!sameDirectory(picked, include)) {
     throw new Error(`CMake picked Vulkan headers at ${picked || 'unknown'}; expected ${include}`)
   }
   console.log(`Vulkan headers: ${picked}`)
@@ -172,6 +173,17 @@ const versionFile = variant === 'vulkan' ? path.join(stageDir, 'VERSION') : path
 fs.writeFileSync(versionFile, `whisper.cpp ${TAG} ${COMMIT}${variant ? ` (${variant})` : ''}\n`)
 if (process.env.FLOWA_GLIBC_MAX || process.env.FLOWA_GLIBCXX_MAX) assertLibc(stageDir)
 console.log(`whisper.cpp ${TAG} ${COMMIT}${suffix || variant ? ` [${variant || 'default'}]` : ''} → ${variant === 'vulkan' ? stageDir : out}`)
+
+function sameDirectory(left, right) {
+  const normalize = (dir) => {
+    if (!dir) return ''
+    const resolved = path.resolve(dir)
+    try { return fs.realpathSync.native(resolved) } catch { return resolved }
+  }
+  const a = normalize(left)
+  const b = normalize(right)
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b
+}
 
 function pinLinuxRpath(dir) {
   let patchelf = true
