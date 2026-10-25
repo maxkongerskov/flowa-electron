@@ -16,6 +16,7 @@ import {
   licenseUrl,
   networkBackoffMs,
   normalizeLicenseKey,
+  statusRequest,
   type Interpreted
 } from './protocol'
 import { newRequestId } from './encoding'
@@ -334,6 +335,50 @@ export class LicenseController {
     this.meta.checkinFailures = 0
     this.meta.nextNetworkAttemptAtMs = 0
     this.persistMeta()
+    await this.statusInner()
+  }
+
+  /**
+   * While licensed, status carries this device's binding next to the stored key
+   * so a rotated key still resolves. invalid_key here never drops the seat.
+   * The status license has no device binding, so it does not replace license.json.
+   */
+  private async statusInner(): Promise<void> {
+    const fields = this.adopted?.fields
+    if (!fields?.licenseId || !fields.deviceId || this.access() !== 'licensed') return
+    const key = this.keys.read()
+    if (!key) return
+    const requestId = newRequestId((n) => this.crypto.randomBytes(n))
+    const verified = await this.post(
+      'status',
+      statusRequest({
+        productId: this.config.productId,
+        licenseKey: key,
+        requestId,
+        licenseId: fields.licenseId,
+        deviceId: fields.deviceId,
+        fingerprint: this.fingerprint
+      }),
+      false
+    )
+    if (verified === 'network') return
+    const interpreted = this.read(verified, requestId, 'status')
+    if (interpreted.kind === 'rejected') return
+    this.noteServerTime(interpreted.serverTimeMs)
+    if (interpreted.kind === 'rate_limited') {
+      this.meta.rateLimitedUntilMs = this.now() + interpreted.retryAfterSeconds * 1000
+      this.persistMeta()
+      return
+    }
+    if (interpreted.kind === 'invalid_key' || interpreted.kind === 'no_change' || interpreted.kind === 'device_not_found') {
+      return
+    }
+    if (interpreted.kind === 'status' && interpreted.fields?.keyHint && this.adopted) {
+      this.adopted = {
+        ...this.adopted,
+        fields: { ...this.adopted.fields, keyHint: interpreted.fields.keyHint }
+      }
+    }
   }
 
   private async deactivateInner(): Promise<void> {
@@ -413,7 +458,7 @@ export class LicenseController {
   private read(
     verified: { raw: string; payload: Record<string, unknown>; serverTimeMs: number },
     requestId: string,
-    context: 'activate' | 'checkin' | 'deactivate'
+    context: 'activate' | 'checkin' | 'deactivate' | 'status'
   ): Interpreted {
     return interpretPayload(
       verified.payload,
@@ -430,7 +475,7 @@ export class LicenseController {
   }
 
   private async post(
-    method: 'activate' | 'checkin' | 'deactivate',
+    method: 'activate' | 'checkin' | 'deactivate' | 'status',
     body: Record<string, unknown>,
     userInitiated: boolean
   ): Promise<{ raw: string; payload: Record<string, unknown>; serverTimeMs: number } | 'network'> {

@@ -110,7 +110,7 @@ describe('legacy grandfathering', () => {
     expect(app.snapshot().legacyUnlimited).toBe(true)
     expect(env.legacy.read()).toBe(marker)
     expect(env.transport.calls).toHaveLength(1)
-    env.transport.handlers.push(env.respond('ok', null, { devices_used: 2 }))
+    env.transport.handlers.push(env.respond('ok', null, { license_id: 'lic_1', device_id: 'dev_1', devices_used: 2 }))
     await app.deactivate()
     expect(app.snapshot().mode).toBe('free')
     expect(app.snapshot().legacyUnlimited).toBe(true)

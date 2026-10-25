@@ -6,10 +6,10 @@
       "id": "flowa",
       "displayName": "Flowa",
       "domains": {
-        "license": "license.flowa.app",
+        "license": "license.reddocklabs.com",
         "site": "flowa.app"
       },
-      "licenseBaseUrl": "https://license.flowa.app/v1",
+      "licenseBaseUrl": "https://license.reddocklabs.com/v1",
       "purchaseUrl": "https://flowa.app/buy",
       "portalUrl": "https://flowa.app/account",
       "deviceLimit": 3,

@@ -1,0 +1,134 @@
+{
+  "WARNING": "TEST-ONLY vectors signed with the publicly known TEST-ONLY seed (fixtures/TEST-ONLY-signing-seed.json). An app build must NEVER trust this kid outside unit tests.",
+  "spec": "flowa-licens-interface v0.4.3/v0.4.4 §4, §4a, T31",
+  "public_key": {
+    "kid": "lic-sbx-test-only-1",
+    "raw_b64url": "kC_WTqI4R8VKPLSnjvKInrIrNGK2nKI0aLhjuinsAQw",
+    "spki_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAkC/WTqI4R8VKPLSnjvKInrIrNGK2nKI0aLhjuinsAQw=\n-----END PUBLIC KEY-----\n"
+  },
+  "fingerprint_vectors": [
+    {
+      "product_id": "flowa",
+      "raw_id": "test-machine-id-1",
+      "fingerprint": "57c9089a71b84f9208363c04f2400df7c378c44a7a088c2a1a81d08280bbb339"
+    },
+    {
+      "product_id": "flowa",
+      "raw_id": "  TEST-MACHINE-ID-1 \n",
+      "fingerprint": "57c9089a71b84f9208363c04f2400df7c378c44a7a088c2a1a81d08280bbb339",
+      "note": "trim + lowercase -> same as above"
+    },
+    {
+      "product_id": "demo2",
+      "raw_id": "test-machine-id-1",
+      "fingerprint": "48f41f806c8a5aa9595832476203b7dc67a8a8baa68119f36c5dc08c76f723e9",
+      "note": "HMAC key is demo2-fp-v1 (§4a: <product_id>-fp-v1) -> different fingerprint (T-MP2)"
+    }
+  ],
+  "envelopes": [
+    {
+      "name": "ok_activate",
+      "envelope": {
+        "payload": "eyJhcGlfdmVyc2lvbiI6MSwicHJvZHVjdF9pZCI6ImZsb3dhIiwicmVxdWVzdF9pZCI6IkFBQUFBQUFBQUFBQUFBQUFBQUFBQUEiLCJzZXJ2ZXJfdGltZSI6IjIwMjYtMTEtMDFUMTA6MDA6MDBaIiwic3RhdHVzIjoib2siLCJsaWNlbnNlIjp7InByb2R1Y3RfaWQiOiJmbG93YSIsImxpY2Vuc2VfaWQiOiJsaWNfVEVTVFZFQ1RPUjAwMDAwMDAwMDAwIiwia2V5X2hpbnQiOiJGTE9XQS0qKioqLVRFU1QiLCJzdGF0ZSI6ImFjdGl2ZSIsInBsYW4iOiJmbG93YS1wZXJwZXR1YWwiLCJkZXZpY2VfbGltaXQiOjMsImRldmljZXNfdXNlZCI6MSwiZGV2aWNlX2lkIjoiZGV2X1RFU1RWRUNUT1IwMDAwMDAwMDAwMCIsInBsYXRmb3JtIjoibWFjb3MiLCJmaW5nZXJwcmludCI6IjU3YzkwODlhNzFiODRmOTIwODM2M2MwNGYyNDAwZGY3YzM3OGM0NGE3YTA4OGMyYTFhODFkMDgyODBiYmIzMzkiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTAxVDA5OjAwOjAwWiIsIm5leHRfY2hlY2tpbl9hZnRlciI6IjIwMjYtMTEtMDhUMTA6MDA6MDBaIiwiY2hlY2tpbl9udWRnZV9hZnRlciI6IjIwMjYtMTItMDFUMTA6MDA6MDBaIiwicHJvdmlkZXIiOiJwYWRkbGUifX0",
+        "sig": "GoGkvXxckiY89GUpa3GExU6Jh4YxeZ9dGUr4fKcKmP8NaT7nJaDmegx2-tBQGEn24pZNDE3TFHzFeVu1JEGfAA",
+        "kid": "lic-sbx-test-only-1"
+      },
+      "expect": "valid",
+      "request_id": "AAAAAAAAAAAAAAAAAAAAAA",
+      "decoded_payload_json": "{\"api_version\":1,\"product_id\":\"flowa\",\"request_id\":\"AAAAAAAAAAAAAAAAAAAAAA\",\"server_time\":\"2026-11-01T10:00:00Z\",\"status\":\"ok\",\"license\":{\"product_id\":\"flowa\",\"license_id\":\"lic_TESTVECTOR00000000000\",\"key_hint\":\"FLOWA-****-TEST\",\"state\":\"active\",\"plan\":\"flowa-perpetual\",\"device_limit\":3,\"devices_used\":1,\"device_id\":\"dev_TESTVECTOR00000000000\",\"platform\":\"macos\",\"fingerprint\":\"57c9089a71b84f9208363c04f2400df7c378c44a7a088c2a1a81d08280bbb339\",\"issued_at\":\"2026-10-01T09:00:00Z\",\"next_checkin_after\":\"2026-11-08T10:00:00Z\",\"checkin_nudge_after\":\"2026-12-01T10:00:00Z\",\"provider\":\"paddle\"}}"
+    },
+    {
+      "name": "refunded_checkin",
+      "envelope": {
+        "payload": "eyJhcGlfdmVyc2lvbiI6MSwicHJvZHVjdF9pZCI6ImZsb3dhIiwicmVxdWVzdF9pZCI6IkJCQkJCQkJCQkJCQkJCQkJCQkJCQkIiLCJzZXJ2ZXJfdGltZSI6IjIwMjYtMTEtMDJUMTA6MDA6MDBaIiwic3RhdHVzIjoicmVmdW5kZWQiLCJsaWNlbnNlIjp7InByb2R1Y3RfaWQiOiJmbG93YSIsImxpY2Vuc2VfaWQiOiJsaWNfVEVTVFZFQ1RPUjAwMDAwMDAwMDAwIiwic3RhdGUiOiJyZWZ1bmRlZCIsInJlc3RyaWN0X2FmdGVyIjoiMjAyNi0xMS0wOVQxMDowMDowMFoiLCJwcm92aWRlciI6InBhZGRsZSJ9fQ",
+        "sig": "344aPuboR5Y7AiGawOyoP9wpX-ciKbwMN_m-_mKt0Gea4-TJIJH01jpV8D-ssuFOzebLsYSmQUHH0cnW8QfcAA",
+        "kid": "lic-sbx-test-only-1"
+      },
+      "expect": "valid",
+      "request_id": "BBBBBBBBBBBBBBBBBBBBBB"
+    },
+    {
+      "name": "unknown_extra_field",
+      "envelope": {
+        "payload": "eyJhcGlfdmVyc2lvbiI6MSwicHJvZHVjdF9pZCI6ImZsb3dhIiwicmVxdWVzdF9pZCI6IkNDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0MiLCJzZXJ2ZXJfdGltZSI6IjIwMjYtMTEtMDFUMTA6MDA6MDBaIiwic3RhdHVzIjoib2siLCJ6el91bmtub3duX2Z1dHVyZV9maWVsZCI6eyJ4IjpbMSwyXX19",
+        "sig": "71CWAJIEDl403Cx1jso3TCL3mO5wSH8q4aAVaH1DFJHUP60rTVTPpu-2j0x0-4EUIjcERv0SLMMgv_CLvMiSAg",
+        "kid": "lic-sbx-test-only-1"
+      },
+      "expect": "valid",
+      "request_id": "CCCCCCCCCCCCCCCCCCCCCC",
+      "note": "T20/T28: ignore unknown fields; verify over raw bytes"
+    },
+    {
+      "name": "signed_error",
+      "envelope": {
+        "payload": "eyJhcGlfdmVyc2lvbiI6MSwicHJvZHVjdF9pZCI6ImZsb3dhIiwicmVxdWVzdF9pZCI6IkVFRUVFRUVFRUVFRUVFRUVFRUVFRUUiLCJzZXJ2ZXJfdGltZSI6IjIwMjYtMTEtMDFUMTA6MDA6MDBaIiwic3RhdHVzIjoiaW52YWxpZF9rZXkifQ",
+        "sig": "UF7p5VLm-VgrutA6zu7C4tXDSK8Y58x02Pwt3sFq1S6ZSQPTUnbVhwURBoP5oWM9a5dX2jhIpkrjBDLYD5q0BQ",
+        "kid": "lic-sbx-test-only-1"
+      },
+      "expect": "valid",
+      "request_id": "EEEEEEEEEEEEEEEEEEEEEE"
+    },
+    {
+      "name": "tampered_payload",
+      "envelope": {
+        "payload": "eyJhcAlfdmVyc2lvbiI6MSwicHJvZHVjdF9pZCI6ImZsb3dhIiwicmVxdWVzdF9pZCI6IkFBQUFBQUFBQUFBQUFBQUFBQUFBQUEiLCJzZXJ2ZXJfdGltZSI6IjIwMjYtMTEtMDFUMTA6MDA6MDBaIiwic3RhdHVzIjoib2siLCJsaWNlbnNlIjp7InByb2R1Y3RfaWQiOiJmbG93YSIsImxpY2Vuc2VfaWQiOiJsaWNfVEVTVFZFQ1RPUjAwMDAwMDAwMDAwIiwia2V5X2hpbnQiOiJGTE9XQS0qKioqLVRFU1QiLCJzdGF0ZSI6ImFjdGl2ZSIsInBsYW4iOiJmbG93YS1wZXJwZXR1YWwiLCJkZXZpY2VfbGltaXQiOjMsImRldmljZXNfdXNlZCI6MSwiZGV2aWNlX2lkIjoiZGV2X1RFU1RWRUNUT1IwMDAwMDAwMDAwMCIsInBsYXRmb3JtIjoibWFjb3MiLCJmaW5nZXJwcmludCI6IjU3YzkwODlhNzFiODRmOTIwODM2M2MwNGYyNDAwZGY3YzM3OGM0NGE3YTA4OGMyYTFhODFkMDgyODBiYmIzMzkiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTAxVDA5OjAwOjAwWiIsIm5leHRfY2hlY2tpbl9hZnRlciI6IjIwMjYtMTEtMDhUMTA6MDA6MDBaIiwiY2hlY2tpbl9udWRnZV9hZnRlciI6IjIwMjYtMTItMDFUMTA6MDA6MDBaIiwicHJvdmlkZXIiOiJwYWRkbGUifX0",
+        "sig": "GoGkvXxckiY89GUpa3GExU6Jh4YxeZ9dGUr4fKcKmP8NaT7nJaDmegx2-tBQGEn24pZNDE3TFHzFeVu1JEGfAA",
+        "kid": "lic-sbx-test-only-1"
+      },
+      "expect": "bad_signature"
+    },
+    {
+      "name": "tampered_sig",
+      "envelope": {
+        "payload": "eyJhcGlfdmVyc2lvbiI6MSwicHJvZHVjdF9pZCI6ImZsb3dhIiwicmVxdWVzdF9pZCI6IkFBQUFBQUFBQUFBQUFBQUFBQUFBQUEiLCJzZXJ2ZXJfdGltZSI6IjIwMjYtMTEtMDFUMTA6MDA6MDBaIiwic3RhdHVzIjoib2siLCJsaWNlbnNlIjp7InByb2R1Y3RfaWQiOiJmbG93YSIsImxpY2Vuc2VfaWQiOiJsaWNfVEVTVFZFQ1RPUjAwMDAwMDAwMDAwIiwia2V5X2hpbnQiOiJGTE9XQS0qKioqLVRFU1QiLCJzdGF0ZSI6ImFjdGl2ZSIsInBsYW4iOiJmbG93YS1wZXJwZXR1YWwiLCJkZXZpY2VfbGltaXQiOjMsImRldmljZXNfdXNlZCI6MSwiZGV2aWNlX2lkIjoiZGV2X1RFU1RWRUNUT1IwMDAwMDAwMDAwMCIsInBsYXRmb3JtIjoibWFjb3MiLCJmaW5nZXJwcmludCI6IjU3YzkwODlhNzFiODRmOTIwODM2M2MwNGYyNDAwZGY3YzM3OGM0NGE3YTA4OGMyYTFhODFkMDgyODBiYmIzMzkiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTAxVDA5OjAwOjAwWiIsIm5leHRfY2hlY2tpbl9hZnRlciI6IjIwMjYtMTEtMDhUMTA6MDA6MDBaIiwiY2hlY2tpbl9udWRnZV9hZnRlciI6IjIwMjYtMTItMDFUMTA6MDA6MDBaIiwicHJvdmlkZXIiOiJwYWRkbGUifX0",
+        "sig": "GoGkvAxckiY89GUpa3GExU6Jh4YxeZ9dGUr4fKcKmP8NaT7nJaDmegx2-tBQGEn24pZNDE3TFHzFeVu1JEGfAA",
+        "kid": "lic-sbx-test-only-1"
+      },
+      "expect": "bad_signature"
+    },
+    {
+      "name": "wrong_kid",
+      "envelope": {
+        "payload": "eyJhcGlfdmVyc2lvbiI6MSwicHJvZHVjdF9pZCI6ImZsb3dhIiwicmVxdWVzdF9pZCI6IkFBQUFBQUFBQUFBQUFBQUFBQUFBQUEiLCJzZXJ2ZXJfdGltZSI6IjIwMjYtMTEtMDFUMTA6MDA6MDBaIiwic3RhdHVzIjoib2siLCJsaWNlbnNlIjp7InByb2R1Y3RfaWQiOiJmbG93YSIsImxpY2Vuc2VfaWQiOiJsaWNfVEVTVFZFQ1RPUjAwMDAwMDAwMDAwIiwia2V5X2hpbnQiOiJGTE9XQS0qKioqLVRFU1QiLCJzdGF0ZSI6ImFjdGl2ZSIsInBsYW4iOiJmbG93YS1wZXJwZXR1YWwiLCJkZXZpY2VfbGltaXQiOjMsImRldmljZXNfdXNlZCI6MSwiZGV2aWNlX2lkIjoiZGV2X1RFU1RWRUNUT1IwMDAwMDAwMDAwMCIsInBsYXRmb3JtIjoibWFjb3MiLCJmaW5nZXJwcmludCI6IjU3YzkwODlhNzFiODRmOTIwODM2M2MwNGYyNDAwZGY3YzM3OGM0NGE3YTA4OGMyYTFhODFkMDgyODBiYmIzMzkiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTAxVDA5OjAwOjAwWiIsIm5leHRfY2hlY2tpbl9hZnRlciI6IjIwMjYtMTEtMDhUMTA6MDA6MDBaIiwiY2hlY2tpbl9udWRnZV9hZnRlciI6IjIwMjYtMTItMDFUMTA6MDA6MDBaIiwicHJvdmlkZXIiOiJwYWRkbGUifX0",
+        "sig": "GoGkvXxckiY89GUpa3GExU6Jh4YxeZ9dGUr4fKcKmP8NaT7nJaDmegx2-tBQGEn24pZNDE3TFHzFeVu1JEGfAA",
+        "kid": "lic-sbx-unknown-1"
+      },
+      "expect": "unknown_kid"
+    },
+    {
+      "name": "prod_kid_in_sandbox_build",
+      "envelope": {
+        "payload": "eyJhcGlfdmVyc2lvbiI6MSwicHJvZHVjdF9pZCI6ImZsb3dhIiwicmVxdWVzdF9pZCI6IkFBQUFBQUFBQUFBQUFBQUFBQUFBQUEiLCJzZXJ2ZXJfdGltZSI6IjIwMjYtMTEtMDFUMTA6MDA6MDBaIiwic3RhdHVzIjoib2siLCJsaWNlbnNlIjp7InByb2R1Y3RfaWQiOiJmbG93YSIsImxpY2Vuc2VfaWQiOiJsaWNfVEVTVFZFQ1RPUjAwMDAwMDAwMDAwIiwia2V5X2hpbnQiOiJGTE9XQS0qKioqLVRFU1QiLCJzdGF0ZSI6ImFjdGl2ZSIsInBsYW4iOiJmbG93YS1wZXJwZXR1YWwiLCJkZXZpY2VfbGltaXQiOjMsImRldmljZXNfdXNlZCI6MSwiZGV2aWNlX2lkIjoiZGV2X1RFU1RWRUNUT1IwMDAwMDAwMDAwMCIsInBsYXRmb3JtIjoibWFjb3MiLCJmaW5nZXJwcmludCI6IjU3YzkwODlhNzFiODRmOTIwODM2M2MwNGYyNDAwZGY3YzM3OGM0NGE3YTA4OGMyYTFhODFkMDgyODBiYmIzMzkiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTAxVDA5OjAwOjAwWiIsIm5leHRfY2hlY2tpbl9hZnRlciI6IjIwMjYtMTEtMDhUMTA6MDA6MDBaIiwiY2hlY2tpbl9udWRnZV9hZnRlciI6IjIwMjYtMTItMDFUMTA6MDA6MDBaIiwicHJvdmlkZXIiOiJwYWRkbGUifX0",
+        "sig": "GoGkvXxckiY89GUpa3GExU6Jh4YxeZ9dGUr4fKcKmP8NaT7nJaDmegx2-tBQGEn24pZNDE3TFHzFeVu1JEGfAA",
+        "kid": "lic-prod-1"
+      },
+      "expect": "kid_prefix (sandbox build) / unknown_kid (production build)"
+    },
+    {
+      "name": "replay_wrong_request_id",
+      "envelope": {
+        "payload": "eyJhcGlfdmVyc2lvbiI6MSwicHJvZHVjdF9pZCI6ImZsb3dhIiwicmVxdWVzdF9pZCI6IkFBQUFBQUFBQUFBQUFBQUFBQUFBQUEiLCJzZXJ2ZXJfdGltZSI6IjIwMjYtMTEtMDFUMTA6MDA6MDBaIiwic3RhdHVzIjoib2siLCJsaWNlbnNlIjp7InByb2R1Y3RfaWQiOiJmbG93YSIsImxpY2Vuc2VfaWQiOiJsaWNfVEVTVFZFQ1RPUjAwMDAwMDAwMDAwIiwia2V5X2hpbnQiOiJGTE9XQS0qKioqLVRFU1QiLCJzdGF0ZSI6ImFjdGl2ZSIsInBsYW4iOiJmbG93YS1wZXJwZXR1YWwiLCJkZXZpY2VfbGltaXQiOjMsImRldmljZXNfdXNlZCI6MSwiZGV2aWNlX2lkIjoiZGV2X1RFU1RWRUNUT1IwMDAwMDAwMDAwMCIsInBsYXRmb3JtIjoibWFjb3MiLCJmaW5nZXJwcmludCI6IjU3YzkwODlhNzFiODRmOTIwODM2M2MwNGYyNDAwZGY3YzM3OGM0NGE3YTA4OGMyYTFhODFkMDgyODBiYmIzMzkiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTAxVDA5OjAwOjAwWiIsIm5leHRfY2hlY2tpbl9hZnRlciI6IjIwMjYtMTEtMDhUMTA6MDA6MDBaIiwiY2hlY2tpbl9udWRnZV9hZnRlciI6IjIwMjYtMTItMDFUMTA6MDA6MDBaIiwicHJvdmlkZXIiOiJwYWRkbGUifX0",
+        "sig": "GoGkvXxckiY89GUpa3GExU6Jh4YxeZ9dGUr4fKcKmP8NaT7nJaDmegx2-tBQGEn24pZNDE3TFHzFeVu1JEGfAA",
+        "kid": "lic-sbx-test-only-1"
+      },
+      "expect": "replay",
+      "request_id": "ZZZZZZZZZZZZZZZZZZZZZZ"
+    },
+    {
+      "name": "other_product",
+      "envelope": {
+        "payload": "eyJhcGlfdmVyc2lvbiI6MSwicHJvZHVjdF9pZCI6ImRlbW8yIiwicmVxdWVzdF9pZCI6IkREREREREREREREREREREREREREREQiLCJzZXJ2ZXJfdGltZSI6IjIwMjYtMTEtMDFUMTA6MDA6MDBaIiwic3RhdHVzIjoib2sifQ",
+        "sig": "yx4xNexBwMa-rSLWs9Y0yHL24xO92gIce0vJZ0965RBcP_ezvOa4bD3oHjNYO7Ex-PlTILH6dwJGEJcQguWtAg",
+        "kid": "lic-sbx-test-only-1"
+      },
+      "expect": "product_mismatch",
+      "request_id": "DDDDDDDDDDDDDDDDDDDDDD",
+      "app_product_id": "flowa"
+    },
+    {
+      "name": "captive_portal_html",
+      "body": "<html><body>Sign in to Wi-Fi</body></html>",
+      "expect": "network_error"
+    }
+  ]
+}

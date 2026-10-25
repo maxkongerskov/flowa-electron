@@ -20,7 +20,7 @@ export type Interpreted =
   | { kind: 'adopt'; fields: LicenseFields; serverTimeMs: number }
   | { kind: 'deactivate_ok'; serverTimeMs: number; devicesUsed: number | null }
   | { kind: 'invalid_key'; serverTimeMs: number }
-  | { kind: 'device_limit'; serverTimeMs: number; devices: DeviceListing[] }
+  | { kind: 'device_limit'; serverTimeMs: number; devices: DeviceListing[]; fields: LicenseFields | null }
   | { kind: 'rate_limited'; serverTimeMs: number; retryAfterSeconds: number }
   | { kind: 'fingerprint_mismatch'; serverTimeMs: number }
   /** The signed license does not know this device. The app tries one re-activation. */
@@ -111,8 +111,42 @@ export function deactivateRequest(args: {
   }
 }
 
-export function statusRequest(args: { productId: string; licenseKey: string; requestId: string }): Record<string, unknown> {
-  return { product_id: args.productId, license_key: args.licenseKey, request_id: args.requestId }
+/**
+ * Status while this device is licensed also sends the binding. After a key
+ * rotation the old key still resolves when license_id, device_id, and
+ * fingerprint match an active device. A key-only status omits them.
+ */
+export function statusRequest(args: {
+  productId: string
+  licenseKey: string
+  requestId: string
+  licenseId?: string
+  deviceId?: string
+  fingerprint?: string
+}): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    product_id: args.productId,
+    license_key: args.licenseKey,
+    request_id: args.requestId
+  }
+  if (args.licenseId && args.deviceId && args.fingerprint) {
+    body.license_id = args.licenseId
+    body.device_id = args.deviceId
+    body.fingerprint = args.fingerprint
+  }
+  return body
+}
+
+/**
+ * The signed payload decides. HTTP status is ignored, including 4xx and 5xx.
+ * An empty body cannot be an envelope, so an unsigned 503 is a network error.
+ */
+export function licenseHttpBody(
+  httpStatus: number,
+  raw: string
+): { kind: 'response'; httpStatus: number; raw: string } | { kind: 'error'; reason: 'network' } {
+  if (raw.trim() === '') return { kind: 'error', reason: 'network' }
+  return { kind: 'response', httpStatus, raw }
 }
 
 export function interpretPayload(payload: Record<string, unknown>, ctx: InterpretContext, serverTimeMs: number): Interpreted {
@@ -135,12 +169,17 @@ export function interpretPayload(payload: Record<string, unknown>, ctx: Interpre
   }
   if (status === 'invalid_key') return { kind: 'invalid_key', serverTimeMs }
   if (status === 'device_limit_reached') {
-    return { kind: 'device_limit', serverTimeMs, devices: readDevices(payload) }
+    return { kind: 'device_limit', serverTimeMs, devices: readDevices(payload), fields: readLicenseFields(payload) }
   }
   if (status === 'fingerprint_mismatch') return { kind: 'fingerprint_mismatch', serverTimeMs }
   if (status === 'device_not_found') return { kind: 'device_not_found', serverTimeMs }
 
   if (ctx.context === 'deactivate' && (status === 'ok' || status === 'active')) {
+    const licenseId = typeof payload.license_id === 'string' ? payload.license_id : ''
+    const deviceId = typeof payload.device_id === 'string' ? payload.device_id : ''
+    if (!licenseId || !deviceId) return { kind: 'no_change', serverTimeMs }
+    if (!ctx.boundLicenseId || licenseId !== ctx.boundLicenseId) return { kind: 'rejected' }
+    if (!ctx.boundDeviceId || deviceId !== ctx.boundDeviceId) return { kind: 'rejected' }
     const used = payload.devices_used
     return {
       kind: 'deactivate_ok',
@@ -212,10 +251,11 @@ export function readDevices(payload: Record<string, unknown>): DeviceListing[] {
   for (const item of payload.devices) {
     if (!item || typeof item !== 'object') continue
     const o = item as Record<string, unknown>
-    if (typeof o.id !== 'string' || o.id.length === 0) continue
+    const id = stringField(o.device_id) || stringField(o.id)
+    if (!id) continue
     out.push({
-      id: o.id,
-      name: typeof o.name === 'string' ? o.name : null,
+      id,
+      name: stringField(o.device_name) || stringField(o.name) || null,
       platform: typeof o.platform === 'string' ? o.platform : null,
       lastSeen: typeof o.last_seen === 'string' ? o.last_seen : null
     })
@@ -251,6 +291,10 @@ export function readLicenseFields(payload: Record<string, unknown>): LicenseFiel
     restrictAfterMs: readTime(o.restrict_after),
     freeDailySeconds: readFreeDailySeconds(quotaSource)
   }
+}
+
+function stringField(value: unknown): string {
+  return typeof value === 'string' ? value : ''
 }
 
 function readFreeDailySeconds(source: Record<string, unknown>): number | null {

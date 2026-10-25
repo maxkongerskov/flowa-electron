@@ -12,6 +12,12 @@ export const DEVICE_ID_FILE = 'device-id.txt'
 
 export const LICENSE_TIMEOUT_MS = 10_000
 
+/**
+ * Production license API. Baked in. Production builds ignore environment overrides.
+ * The sandbox host is not decided yet, so only an unpackaged sandbox build may replace this.
+ */
+export const PRODUCTION_LICENSE_BASE_URL = 'https://license.reddocklabs.com/v1'
+
 const HTTPS_URL = /^https:\/\/[a-z0-9.-]+(?::\d+)?(\/.*)?$/i
 const LOCAL_HTTP = /^http:\/\/(127\.0\.0\.1|localhost)(?::\d+)?(\/.*)?$/i
 
@@ -28,10 +34,25 @@ export function resolveLicenseLocations(
 ): LicenseLocations {
   if (!allowRuntimeOverride) return strip(baked)
   return {
-    baseUrl: pickUrl(env.FLOWA_LICENSE_BASE_URL, baked.baseUrl, true),
+    baseUrl: baked.baseUrl.replace(/\/+$/, ''),
     purchaseUrl: pickUrl(env.FLOWA_LICENSE_PURCHASE_URL, baked.purchaseUrl, false),
     portalUrl: pickUrl(env.FLOWA_LICENSE_PORTAL_URL, baked.portalUrl, false)
   }
+}
+
+/**
+ * Production always uses the baked host. A sandbox override is accepted only when
+ * the caller allows it and the value is https or local http. Anything else keeps
+ * the production host, because no sandbox host is decided yet.
+ */
+export function resolveLicenseBaseUrl(args: {
+  channel: LicenseChannel
+  env: NodeJS.ProcessEnv
+  allowSandboxOverride: boolean
+}): string {
+  const baked = PRODUCTION_LICENSE_BASE_URL
+  if (args.channel !== 'sbx' || !args.allowSandboxOverride) return baked
+  return pickUrl(args.env.FLOWA_LICENSE_BASE_URL, baked, true)
 }
 
 /** Channel only selects which baked public keys are accepted. It does not move userData. */

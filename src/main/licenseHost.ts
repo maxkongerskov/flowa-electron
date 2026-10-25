@@ -9,12 +9,13 @@ import { loadBundledProductProfile, uiCopy } from '../license/brand'
 import { failOpenSnapshot, LicenseController, type LicenseConfig } from '../license/controller'
 import { parseIOPlatformUUID, parseMachineGuid, readLinuxMachineId, resolveRawDeviceId } from '../license/deviceId'
 import { createKeyStore } from '../license/keyStore'
-import { licenseChannel, resolveLicenseLocations } from '../license/locations'
+import { licenseChannel, resolveLicenseBaseUrl, resolveLicenseLocations } from '../license/locations'
 import { nodeLicenseCrypto } from '../license/nodeCrypto'
 import { createNodeStorage, writeFileAtomic } from '../license/nodeStorage'
 import { PLACEHOLDER_KEYS } from '../license/placeholderKeys'
 import { PRODUCT_ID } from '../license/productId'
 import type { LicenseSnapshot, LicenseTransport, StartDecision } from '../license/types'
+import { licenseHttpBody } from '../license/protocol'
 import { licenseStoragePaths, pendingUpdateInfoPath, updaterCacheRoot } from '../license/userDataFiles'
 
 export interface RunningLicense {
@@ -65,6 +66,11 @@ function startLicenseInner(
     !args.packaged
   )
   const channel = args.packaged ? 'prod' : licenseChannel(process.env.FLOWA_LICENSE_CHANNEL === 'sbx' ? 'sbx' : 'prod')
+  const baseUrl = resolveLicenseBaseUrl({
+    channel,
+    env: process.env,
+    allowSandboxOverride: !args.packaged && channel === 'sbx'
+  })
   const prefix = channel === 'sbx' ? 'lic-sbx-' : 'lic-prod-'
   const files = licenseStoragePaths(args.userDataDir)
   const cryptoImpl = nodeLicenseCrypto()
@@ -78,7 +84,7 @@ function startLicenseInner(
   const config: LicenseConfig = {
     productId: PRODUCT_ID,
     channel,
-    baseUrl: locations.baseUrl,
+    baseUrl,
     purchaseUrl: locations.purchaseUrl,
     portalUrl: locations.portalUrl,
     publicKeys: PLACEHOLDER_KEYS.filter((entry) => entry.kid.startsWith(prefix)),
@@ -200,11 +206,8 @@ function electronTransport(log: (message: string) => void): LicenseTransport {
             res.on('end', () => {
               clearTimeout(timer)
               const status = res.statusCode ?? 0
-              if (status < 200 || status >= 300) {
-                done({ kind: 'error', reason: 'network' })
-                return
-              }
-              done({ kind: 'response', httpStatus: status, raw: Buffer.concat(chunks).toString('utf8') })
+              // Signed `status` decides. An empty body (unsigned 503) cannot be an envelope.
+              done(licenseHttpBody(status, Buffer.concat(chunks).toString('utf8')))
             })
             res.on('error', () => {
               clearTimeout(timer)

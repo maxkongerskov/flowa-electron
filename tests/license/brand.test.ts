@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { loadBundledProductProfile, uiCopy } from '../../src/license/brand'
+import { PRODUCTION_LICENSE_BASE_URL } from '../../src/license/locations'
 import { PRODUCT_ID } from '../../src/license/productId'
 import { licenseStoragePaths } from '../../src/license/userDataFiles'
 import { assertLegacyRehearsal, legacyAfterBoot } from '../../scripts/e2e-update.mjs'
@@ -11,6 +12,8 @@ describe('catalog and rehearsal', () => {
     expect(profile.productId).toBe(PRODUCT_ID)
     expect(profile.productId).toBe('flowa')
     expect(profile.deviceLimit).toBe(3)
+    expect(profile.licenseBaseUrl).toBe(PRODUCTION_LICENSE_BASE_URL)
+    expect(profile.licenseDomain).toBe('license.reddocklabs.com')
     const copy = uiCopy(profile)
     expect(copy.buyButton).toBe('Køb Flowa (€29, én gang)')
     expect(copy.deviceLimit(profile.portalUrl)).toContain('3 enheder')

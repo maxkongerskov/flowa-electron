@@ -280,7 +280,7 @@ describe('license protocol cases', () => {
     isolated.keys.write('KEY-A')
     const appB = isolated.start({ rawId: 'shared-machine', publicKeys: [a.pair.entry] })
     expect(appB.snapshot().mode).toBe('licensed')
-    a.transport.handlers.push(a.respond('ok'))
+    a.transport.handlers.push(a.respond('ok', null, { license_id: 'lic_1', device_id: 'dev_1', devices_used: 0 }))
     await appA.deactivate()
     expect(appA.snapshot().mode).toBe('free')
     expect(isolated.storage.read('license.json')).toBe(saved)
