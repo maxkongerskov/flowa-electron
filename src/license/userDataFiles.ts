@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { LEGACY_FILE, UPDATER_CACHE_DIR_NAME } from './legacy'
+import { LEGACY_BRIDGE_FILE, LEGACY_FILE, UPDATER_CACHE_DIR_NAME } from './legacy'
 import {
   DEVICE_ID_FILE,
   KEY_FILE,
@@ -19,6 +19,7 @@ export function licenseStoragePaths(userDataDir: string): {
   key: string
   deviceId: string
   legacy: string
+  bridge: string
   updaterId: string
 } {
   return {
@@ -30,6 +31,7 @@ export function licenseStoragePaths(userDataDir: string): {
     key: path.join(userDataDir, KEY_FILE),
     deviceId: path.join(userDataDir, DEVICE_ID_FILE),
     legacy: path.join(userDataDir, LEGACY_FILE),
+    bridge: path.join(userDataDir, LEGACY_BRIDGE_FILE),
     updaterId: path.join(userDataDir, '.updaterId')
   }
 }

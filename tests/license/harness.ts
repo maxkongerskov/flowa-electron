@@ -98,7 +98,14 @@ export interface LicenseEnv {
   setNow: (ms: number) => void
   advance: (ms: number) => void
   setUi: (ready: boolean) => void
-  start: (opts?: { version?: string; witness?: UpdateWitness; rawId?: string; channel?: 'prod' | 'sbx'; publicKeys?: PublicKeyEntry[] }) => LicenseController
+  start: (opts?: {
+    version?: string
+    witness?: UpdateWitness
+    rawId?: string
+    channel?: 'prod' | 'sbx'
+    publicKeys?: PublicKeyEntry[]
+    bridgeRaw?: string | null
+  }) => LicenseController
   fingerprint: (rawId?: string) => string
   envelope: (payload: Record<string, unknown>, kid?: string, privateKeyPem?: string) => string
   signed: (body: Record<string, unknown>, extra?: Record<string, unknown>) => string
@@ -184,6 +191,7 @@ export function makeEnv(rawId = RAW_ID): LicenseEnv {
         copy,
         deviceLimit: profile.deviceLimit,
         runLegacyMigration: true,
+        bridgeRaw: opts.bridgeRaw ?? null,
         witness: opts.witness ?? { updateInfoRaw: null, updaterIdRaw: null }
       }
       return new LicenseController(config, crypto, storage, keys, legacy, transport, () => now, () => ui, () => {})

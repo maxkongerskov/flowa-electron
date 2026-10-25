@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { legacyMarker, shouldRunLegacyMigration } from '../../src/license/legacy'
+import { bridgeMarker, legacyMarker, shouldRunLegacyMigration } from '../../src/license/legacy'
 import { createKeyStore, type SafeStorageLike } from '../../src/license/keyStore'
 import { formatServerTime } from '../../src/license/encoding'
 import { activeLicense, genuineWitness, makeEnv, PRODUCT, RAW_ID, UPDATER_ID } from './harness'
@@ -148,6 +148,52 @@ describe('legacy grandfathering', () => {
     const app = env.start({ version: '1.2.2', witness: genuineWitness('1.2.2') })
     expect(app.snapshot().legacyUnlimited).toBe(false)
     expect(env.legacy.read()).toBeNull()
+  })
+
+  it('T-LG bridge marker valid for this machine is unlimited', () => {
+    const env = makeEnv()
+    const bridge = JSON.stringify({ v: 1, marker: bridgeMarker(env.crypto, PRODUCT, RAW_ID) })
+    const app = env.start({
+      version: '1.2.4',
+      bridgeRaw: bridge,
+      witness: { updateInfoRaw: null, updaterIdRaw: null }
+    })
+    expect(app.snapshot().legacyUnlimited).toBe(true)
+    expect(app.canStartDictation()).toEqual({ ok: true, meter: false })
+    expect(app.snapshot().remainingSeconds).toBeNull()
+    const stored = JSON.parse(env.legacy.read() ?? 'null') as { marker: string }
+    expect(stored.marker).toBe(legacyMarker(env.crypto, PRODUCT, RAW_ID))
+  })
+
+  it('T-LG bridge marker from another machine is free', () => {
+    const env = makeEnv('this-machine')
+    const bridge = JSON.stringify({ v: 1, marker: bridgeMarker(env.crypto, PRODUCT, 'other-machine') })
+    const app = env.start({
+      version: '1.2.4',
+      rawId: 'this-machine',
+      bridgeRaw: bridge,
+      witness: { updateInfoRaw: null, updaterIdRaw: null }
+    })
+    expect(app.snapshot().legacyUnlimited).toBe(false)
+    expect(app.snapshot().remainingSeconds).toBe(600)
+    expect(app.canStartDictation()).toEqual({ ok: true, meter: true })
+  })
+
+  it('T-LG manual install over a 1.2.3 profile is unlimited without updater files', () => {
+    const env = makeEnv()
+    env.storage.writeAtomic('prefs.json', '{"flowa.language":"da"}')
+    env.storage.writeAtomic('recent.json', '[]')
+    const bridge = JSON.stringify({ v: 1, marker: bridgeMarker(env.crypto, PRODUCT, RAW_ID), note: 'ignored' })
+    const app = env.start({
+      version: '1.2.4',
+      bridgeRaw: bridge,
+      witness: { updateInfoRaw: null, updaterIdRaw: null }
+    })
+    expect(app.snapshot().legacyUnlimited).toBe(true)
+    expect(app.snapshot().dialog).toBeNull()
+    expect(env.transport.calls).toHaveLength(0)
+    const again = env.start({ version: '1.2.5', bridgeRaw: null, witness: { updateInfoRaw: null, updaterIdRaw: null } })
+    expect(again.snapshot().legacyUnlimited).toBe(true)
   })
 
   it('prefs-shaped files without updater signals do not grant unlimited', () => {

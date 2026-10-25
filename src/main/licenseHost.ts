@@ -90,6 +90,8 @@ function startLicenseInner(
     copy,
     deviceLimit: profile.deviceLimit,
     runLegacyMigration: true,
+    // Read only. 1.2.3 writes legacy-bridge.json; this build must not, or a fresh install would grant itself.
+    bridgeRaw: readText(files.bridge),
     witness: {
       updateInfoRaw: readText(pendingUpdateInfoPath(cacheRoot)),
       updaterIdRaw: readText(files.updaterId)

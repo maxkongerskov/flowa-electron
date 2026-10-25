@@ -58,6 +58,8 @@ export interface LicenseConfig {
   /** Catalog device_limit. Fills a signed license only when that field is absent. */
   deviceLimit: number
   runLegacyMigration: boolean
+  /** Plaintext `legacy-bridge.json` from 1.2.3, or null. */
+  bridgeRaw: string | null
   witness: UpdateWitness
 }
 
@@ -534,6 +536,7 @@ export class LicenseController {
       rawDeviceId: this.config.rawDeviceId,
       runningVersion: this.config.appVersion,
       storedRaw,
+      bridgeRaw: this.config.bridgeRaw,
       witness: this.config.witness,
       runMigration: this.config.runLegacyMigration && shouldRunLegacyMigration(this.config.appVersion)
     })

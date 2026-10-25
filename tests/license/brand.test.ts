@@ -25,6 +25,7 @@ describe('catalog and rehearsal', () => {
     const paths = licenseStoragePaths('/tmp/Flowa-Electron')
     expect(paths.directory).toBe('/tmp/Flowa-Electron')
     expect(paths.legacy.endsWith('legacy-unlimited.bin')).toBe(true)
+    expect(paths.bridge.endsWith('legacy-bridge.json')).toBe(true)
     expect(paths.key.endsWith('license-key.bin')).toBe(true)
     expect(paths.updaterId.endsWith('.updaterId')).toBe(true)
   })
