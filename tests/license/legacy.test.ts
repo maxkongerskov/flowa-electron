@@ -196,6 +196,34 @@ describe('legacy grandfathering', () => {
     expect(again.snapshot().legacyUnlimited).toBe(true)
   })
 
+  it('T-LG Windows NSIS installer.exe plus the updater id is unlimited, and either file alone is free', () => {
+    const env = makeEnv()
+    const updated = env.start({
+      version: '1.2.4',
+      witness: { updateInfoRaw: null, updaterIdRaw: UPDATER_ID, installerExePresent: true }
+    })
+    expect(updated.snapshot().legacyUnlimited).toBe(true)
+    expect(updated.canStartDictation()).toEqual({ ok: true, meter: false })
+
+    const copied = makeEnv('copied')
+    const onlyId = copied.start({
+      version: '1.2.4',
+      rawId: 'copied',
+      witness: { updateInfoRaw: null, updaterIdRaw: UPDATER_ID, installerExePresent: false }
+    })
+    expect(onlyId.snapshot().legacyUnlimited).toBe(false)
+    expect(onlyId.snapshot().remainingSeconds).toBe(600)
+
+    const fresh = makeEnv('fresh-win')
+    const onlyExe = fresh.start({
+      version: '1.2.4',
+      rawId: 'fresh-win',
+      witness: { updateInfoRaw: null, updaterIdRaw: null, installerExePresent: true }
+    })
+    expect(onlyExe.snapshot().legacyUnlimited).toBe(false)
+    expect(onlyExe.snapshot().remainingSeconds).toBe(600)
+  })
+
   it('prefs-shaped files without updater signals do not grant unlimited', () => {
     const env = makeEnv()
     env.storage.writeAtomic('prefs.json', '{"flowa.language":"da"}')

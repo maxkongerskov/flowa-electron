@@ -46,3 +46,8 @@ export function updaterCacheRoot(platform: string, env: NodeJS.ProcessEnv, homed
 export function pendingUpdateInfoPath(cacheRoot: string): string {
   return path.join(cacheRoot, UPDATER_CACHE_DIR_NAME, 'pending', 'update-info.json')
 }
+
+/** NSIS stores the setup exe here. It is not inside `pending/`. */
+export function updaterInstallerExePath(cacheRoot: string): string {
+  return path.join(cacheRoot, UPDATER_CACHE_DIR_NAME, 'installer.exe')
+}

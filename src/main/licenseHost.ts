@@ -16,7 +16,7 @@ import { PLACEHOLDER_KEYS } from '../license/placeholderKeys'
 import { PRODUCT_ID } from '../license/productId'
 import type { LicenseSnapshot, LicenseTransport, StartDecision } from '../license/types'
 import { licenseHttpBody } from '../license/protocol'
-import { licenseStoragePaths, pendingUpdateInfoPath, updaterCacheRoot } from '../license/userDataFiles'
+import { licenseStoragePaths, pendingUpdateInfoPath, updaterCacheRoot, updaterInstallerExePath } from '../license/userDataFiles'
 
 export interface RunningLicense {
   snapshot(): LicenseSnapshot
@@ -100,7 +100,8 @@ function startLicenseInner(
     bridgeRaw: readText(files.bridge),
     witness: {
       updateInfoRaw: readText(pendingUpdateInfoPath(cacheRoot)),
-      updaterIdRaw: readText(files.updaterId)
+      updaterIdRaw: readText(files.updaterId),
+      installerExePresent: exists(updaterInstallerExePath(cacheRoot))
     }
   }
   const safe = safeStorage as unknown as Parameters<typeof createKeyStore>[1]
@@ -259,5 +260,13 @@ function readText(file: string): string | null {
     return fs.readFileSync(file, 'utf8')
   } catch {
     return null
+  }
+}
+
+function exists(file: string): boolean {
+  try {
+    return fs.existsSync(file)
+  } catch {
+    return false
   }
 }

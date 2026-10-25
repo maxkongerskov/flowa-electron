@@ -43,6 +43,12 @@ export interface UpdateWitness {
   updateInfoRaw: string | null
   /** Raw `.updaterId` from userData, or null. */
   updaterIdRaw: string | null
+  /**
+   * NSIS copies the setup exe to `{cache}/flowa-updater/installer.exe` while
+   * installing. That file is still there on the new build's first launch when
+   * `pending/update-info.json` has already been removed.
+   */
+  installerExePresent?: boolean
 }
 
 export function shouldRunLegacyMigration(version: string): boolean {
@@ -99,22 +105,30 @@ export function compareSemver(a: string, b: string): number {
 }
 
 /**
- * True only for the first boot after electron-updater has installed a build
- * newer than 1.2.2 over an existing userData that already has the updater id
- * 1.2.x wrote. Prefs and history alone are not enough: a fresh install and a
- * copied folder both have those.
+ * True only for the first boot after an in-place update. The previous build
+ * wrote `.updaterId`. Linux and Mac also leave `pending/update-info.json`.
+ * Windows NSIS leaves `installer.exe` in the updater cache instead. Prefs and
+ * history are not signals. A copied userData folder has the id and not the
+ * cache file, so it stays free.
  */
 export function isGenuineInPlaceUpdate(args: {
   runningVersion: string
   witness: UpdateWitness
 }): boolean {
-  const info = parseUpdateInfo(args.witness.updateInfoRaw)
+  if (!isUpdaterId(args.witness.updaterIdRaw)) return false
+  if (updateInfoMatchesRunningVersion(args.runningVersion, args.witness.updateInfoRaw)) return true
+  // Windows NSIS. The previous version wrote `.updaterId` on its update check.
+  // A brand-new install has the exe and does not yet have that id.
+  return args.witness.installerExePresent === true
+}
+
+function updateInfoMatchesRunningVersion(runningVersion: string, updateInfoRaw: string | null): boolean {
+  const info = parseUpdateInfo(updateInfoRaw)
   if (!info) return false
   const installed = versionFromInstallerName(info.fileName)
   if (!installed) return false
   if (compareSemver(installed, LAST_PRE_LICENSE_VERSION) <= 0) return false
-  if (installed !== args.runningVersion) return false
-  if (!isUpdaterId(args.witness.updaterIdRaw)) return false
+  if (installed !== runningVersion) return false
   return true
 }
 
