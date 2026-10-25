@@ -55,10 +55,15 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+/** `1.2.3` matches the Windows resource form `1.2.3.0`. `1.2.30` does not. */
+export function versionMatches(actual, expected) {
+  return actual === expected || actual.startsWith(`${expected}.`)
+}
+
 /**
  * NSIS quitAndInstall exits the old app as soon as the installer is spawned.
- * The new app.asar is still being written then, so a single read can return a
- * torn package.json. Poll until the installed version matches.
+ * Poll until the installed executable reports the new version. A read can fail
+ * while the installer is replacing the file.
  */
 export async function readVersionWhenReady(readVersion, expected, timeoutMs, pauseMs = 1000) {
   const started = Date.now()
@@ -66,7 +71,7 @@ export async function readVersionWhenReady(readVersion, expected, timeoutMs, pau
   while (Date.now() - started < timeoutMs) {
     try {
       const version = await readVersion()
-      if (version === expected) return
+      if (versionMatches(version, expected)) return
       last = `version ${version}`
     } catch (err) {
       last = err instanceof Error ? err.message : String(err)
@@ -76,6 +81,21 @@ export async function readVersionWhenReady(readVersion, expected, timeoutMs, pau
     await delay(Math.min(pauseMs, remaining))
   }
   throw new Error(`installed version did not become ${expected}: ${last}`)
+}
+
+function windowsProductVersion(exe) {
+  const literal = `'${exe.replace(/'/g, "''")}'`
+  const result = spawnSync('powershell.exe', [
+    '-NoProfile',
+    '-Command',
+    `[System.Diagnostics.FileVersionInfo]::GetVersionInfo(${literal}).ProductVersion`
+  ], { encoding: 'utf8' })
+  if (result.status !== 0) {
+    throw new Error(String(result.stderr || result.stdout || 'version query failed').trim())
+  }
+  const version = String(result.stdout ?? '').trim()
+  if (!version) throw new Error('product version is empty')
+  return version
 }
 
 function run(cmd, args, env = process.env) {
@@ -602,13 +622,12 @@ async function runNsis(work, built) {
       observeCommand: exe,
       observeArgs: ['--no-sandbox'],
       versionCheck: async () => {
-        const asarPath = path.join(resources, 'app.asar')
-        await readVersionWhenReady(async () => {
-          const raw = require('@electron/asar').extractFile(asarPath, 'package.json')
-          const pkg = JSON.parse(Buffer.from(raw).toString('utf8'))
-          if (!pkg || typeof pkg.version !== 'string') throw new Error('package.json has no version')
-          return pkg.version
-        }, TO, 10 * 60 * 1000)
+        try {
+          await readVersionWhenReady(() => windowsProductVersion(exe), TO, 10 * 60 * 1000)
+        } catch (err) {
+          const detail = err instanceof Error ? err.message : String(err)
+          throw new Error(`${detail}\n${readLog(path.join(work, 'update.log')).slice(-2500)}`)
+        }
       }
     })
   } finally {
