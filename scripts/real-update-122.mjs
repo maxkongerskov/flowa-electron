@@ -55,6 +55,29 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+/**
+ * NSIS quitAndInstall exits the old app as soon as the installer is spawned.
+ * The new app.asar is still being written then, so a single read can return a
+ * torn package.json. Poll until the installed version matches.
+ */
+export async function readVersionWhenReady(readVersion, expected, timeoutMs, pauseMs = 1000) {
+  const started = Date.now()
+  let last = 'unread'
+  while (Date.now() - started < timeoutMs) {
+    try {
+      const version = await readVersion()
+      if (version === expected) return
+      last = `version ${version}`
+    } catch (err) {
+      last = err instanceof Error ? err.message : String(err)
+    }
+    const remaining = timeoutMs - (Date.now() - started)
+    if (remaining <= 0) break
+    await delay(Math.min(pauseMs, remaining))
+  }
+  throw new Error(`installed version did not become ${expected}: ${last}`)
+}
+
 function run(cmd, args, env = process.env) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { cwd: root, env, stdio: 'inherit' })
@@ -579,8 +602,13 @@ async function runNsis(work, built) {
       observeCommand: exe,
       observeArgs: ['--no-sandbox'],
       versionCheck: async () => {
-        const pkg = JSON.parse(require('@electron/asar').extractFile(path.join(resources, 'app.asar'), 'package.json').toString())
-        if (pkg.version !== TO) throw new Error(`installed NSIS version is ${pkg.version}`)
+        const asarPath = path.join(resources, 'app.asar')
+        await readVersionWhenReady(async () => {
+          const raw = require('@electron/asar').extractFile(asarPath, 'package.json')
+          const pkg = JSON.parse(Buffer.from(raw).toString('utf8'))
+          if (!pkg || typeof pkg.version !== 'string') throw new Error('package.json has no version')
+          return pkg.version
+        }, TO, 10 * 60 * 1000)
       }
     })
   } finally {
