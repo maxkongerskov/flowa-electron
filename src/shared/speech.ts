@@ -301,21 +301,33 @@ export function vulkanSummaryIsUsable(summary: string | null): boolean {
   return vulkanSummaryHasGpu(summary) !== false
 }
 
-export function encodeVulkanAutoSkip(reason: VulkanSkipReason, at = new Date().toISOString()): string {
-  return `${JSON.stringify({ reason, at })}\n`
+export interface VulkanAutoSkipRecord {
+  reason: VulkanSkipReason
+  version: string
+  at: string
 }
 
-export function vulkanAutoSkipReason(raw: string | null | undefined): VulkanSkipReason | null {
+export function encodeVulkanAutoSkip(reason: VulkanSkipReason, version: string, at = new Date().toISOString()): string {
+  return `${JSON.stringify({ reason, version, at })}\n`
+}
+
+export function parseVulkanAutoSkip(raw: string | null | undefined): VulkanAutoSkipRecord | null {
   if (!raw) return null
   try {
-    const parsed = JSON.parse(raw) as { reason?: unknown }
-    if (parsed.reason === 'start-failed' || parsed.reason === 'ready-timeout' || parsed.reason === 'transcription-timeout') {
-      return parsed.reason
-    }
-    return null
+    const parsed = JSON.parse(raw) as { reason?: unknown; version?: unknown; at?: unknown }
+    if (parsed.reason !== 'start-failed' && parsed.reason !== 'ready-timeout' && parsed.reason !== 'transcription-timeout') return null
+    if (typeof parsed.version !== 'string' || parsed.version.trim() === '') return null
+    return { reason: parsed.reason, version: parsed.version, at: typeof parsed.at === 'string' ? parsed.at : '' }
   } catch {
     return null
   }
+}
+
+/** Active only for the app version that wrote the file. A newer build retries Vulkan. */
+export function vulkanAutoSkipReason(raw: string | null | undefined, appVersion: string): VulkanSkipReason | null {
+  const parsed = parseVulkanAutoSkip(raw)
+  if (!parsed || parsed.version !== appVersion) return null
+  return parsed.reason
 }
 
 /** Why a Vulkan attempt is not worth retrying until the user changes Hardware. */

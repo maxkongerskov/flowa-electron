@@ -266,9 +266,9 @@ export class Transcriber extends EventEmitter {
     const builds = readWhisperManifest(paths.binDir, process.platform)
     const gpu = whisperGpuBackends(builds)
     const hardware = prefs.get(PrefKey.hardware)
-    const remembered = hardware === 'gpu' ? readVulkanAutoSkip(paths.userData) : null
+    const remembered = hardware === 'gpu' ? readVulkanAutoSkip(paths.userData, app.getVersion()) : null
     if (remembered) {
-      console.log(`[Flowa] automatic Vulkan skipped (${remembered}); staying on CPU until Hardware is changed`)
+      console.log(`[Flowa] automatic Vulkan skipped (${remembered}); staying on CPU until Hardware is changed or Flowa updates`)
     }
     return selectBackend(hardware, process.platform, probeGpu(), gpu, builds, label, remembered !== null)
   }
@@ -329,8 +329,8 @@ export class Transcriber extends EventEmitter {
           console.warn(`[Flowa] GPU logs: ${this.serverLog.slice(-8).join(' | ') || '(none)'}`)
           if (plan.backend === 'vulkan') {
             const reason = vulkanSkipReason(phase, e)
-            writeVulkanAutoSkip(paths.userData, reason)
-            console.warn(`[Flowa] Vulkan ${reason}; automatic mode will stay on CPU until Hardware is changed`)
+            writeVulkanAutoSkip(paths.userData, reason, app.getVersion())
+            console.warn(`[Flowa] Vulkan ${reason}; automatic mode will stay on CPU until Hardware is changed or Flowa updates`)
           }
           this.noteGpuFallback(plan.backend === 'cpu' ? 'gpu' : plan.backend)
           this.killServer()

@@ -10,7 +10,7 @@ import { allGranted, machineNoun, menuStatusText, trayIconName } from '@shared/s
 import { languageDisplayName } from '@shared/languages'
 import { isHardwarePref, isSpeechModelId, collectEngineNotices } from '@shared/speech'
 import { configureUserDataPath, paths } from './paths'
-import { clearVulkanAutoSkip } from './vulkanSkip'
+import { clearVulkanAutoSkip, readVulkanAutoSkip } from './vulkanSkip'
 import { prefs } from './store'
 import { permissions } from './permissions'
 import { fnConflict } from './fnConflict'
@@ -52,6 +52,8 @@ if (!skipSingleInstance && !app.requestSingleInstanceLock()) {
 async function main(): Promise<void> {
   await app.whenReady()
   noteE2E(`booted ${app.getVersion()} pid=${process.pid}`)
+  // A skip written by an older build is dropped before the first engine plan.
+  readVulkanAutoSkip(paths.userData, app.getVersion())
 
   // Only our own pages may use the microphone.
   const ours = (url: string): boolean => url.startsWith('file://') || (!!process.env.ELECTRON_RENDERER_URL && url.startsWith(process.env.ELECTRON_RENDERER_URL))

@@ -8,7 +8,7 @@ import {
   assumedWhisperManifest, collectEngineNotices, encodeVulkanAutoSkip, gpuFallbackNote, hardwareChoices, isHardwarePref, isSpeechModelId,
   type WhisperManifest,
   normalizeWhisperManifest, selectBackend, speechModelChoices, speechModelHint, VULKAN_FIRST_INFER_MS, VULKAN_READY_MS,
-  vulkanAutoSkipReason, vulkanDeviceIsSoftware, vulkanSkipReason, vulkanSummaryHasGpu, vulkanSummaryIsUsable, whisperGpuBackends,
+  parseVulkanAutoSkip, vulkanAutoSkipReason, vulkanDeviceIsSoftware, vulkanSkipReason, vulkanSummaryHasGpu, vulkanSummaryIsUsable, whisperGpuBackends,
   whisperLogsShowGpuFailure, whisperNestedExecutable, whisperSmallId, whisperTurboId, whisperVariantDir
 } from '@shared/speech'
 import { clearVulkanAutoSkip, readVulkanAutoSkip, writeVulkanAutoSkip } from '../src/main/vulkanSkip'
@@ -205,25 +205,35 @@ describe('fallback copy', () => {
     expect(vulkanSkipReason('ready', new Error('speech engine exited (1)'))).toBe('start-failed')
     expect(vulkanSkipReason('transcribe', Object.assign(new Error('timed out'), { name: 'TimeoutError' }))).toBe('transcription-timeout')
     expect(vulkanSkipReason('transcribe', new Error('HTTP 500'))).toBe('start-failed')
-    const raw = encodeVulkanAutoSkip('ready-timeout', '2026-10-25T00:00:00.000Z')
-    expect(vulkanAutoSkipReason(raw)).toBe('ready-timeout')
-    expect(vulkanAutoSkipReason('{"reason":"nope"}')).toBeNull()
-    expect(vulkanAutoSkipReason('not json')).toBeNull()
+    const raw = encodeVulkanAutoSkip('ready-timeout', '1.2.3', '2026-10-25T00:00:00.000Z')
+    expect(parseVulkanAutoSkip(raw)).toEqual({ reason: 'ready-timeout', version: '1.2.3', at: '2026-10-25T00:00:00.000Z' })
+    expect(vulkanAutoSkipReason(raw, '1.2.3')).toBe('ready-timeout')
+    expect(vulkanAutoSkipReason(raw, '1.2.4')).toBeNull()
+    expect(vulkanAutoSkipReason('{"reason":"ready-timeout","at":"2026-10-25T00:00:00.000Z"}', '1.2.3')).toBeNull()
+    expect(vulkanAutoSkipReason('{"reason":"nope","version":"1.2.3"}', '1.2.3')).toBeNull()
+    expect(vulkanAutoSkipReason('not json', '1.2.3')).toBeNull()
   })
   it('lets a packaged smoke test point at a small model and keeps release overrides strict', () => {
     expect(modelOverridePath({ FLOWA_WHISPER_MODEL: '/tmp/ggml-tiny.en.bin' }, 'ggml-large-v3-turbo.bin')).toBe('')
     expect(modelOverridePath({ FLOWA_WHISPER_MODEL: '/tmp/ggml-large-v3-turbo.bin' }, 'ggml-large-v3-turbo.bin')).toBe('/tmp/ggml-large-v3-turbo.bin')
     expect(modelOverridePath({ FLOWA_PACKAGED_SMOKE: '1', FLOWA_WHISPER_MODEL: '/tmp/ggml-tiny.en.bin' }, 'ggml-large-v3-turbo.bin')).toBe('/tmp/ggml-tiny.en.bin')
   })
-  it('remembers a Vulkan give-up until Hardware is changed', () => {
+  it('remembers a Vulkan give-up for this version and drops it after an update', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'flowa-vulkan-skip-'))
-    expect(readVulkanAutoSkip(dir)).toBeNull()
-    writeVulkanAutoSkip(dir, 'transcription-timeout')
-    expect(readVulkanAutoSkip(dir)).toBe('transcription-timeout')
+    const file = path.join(dir, 'vulkan-auto-skip.json')
+    expect(readVulkanAutoSkip(dir, '1.2.3')).toBeNull()
+    writeVulkanAutoSkip(dir, 'transcription-timeout', '1.2.3')
+    expect(readVulkanAutoSkip(dir, '1.2.3')).toBe('transcription-timeout')
+    expect(fs.existsSync(file)).toBe(true)
+    expect(readVulkanAutoSkip(dir, '1.2.4')).toBeNull()
+    expect(fs.existsSync(file)).toBe(false)
+    writeVulkanAutoSkip(dir, 'start-failed', '1.2.4')
+    expect(readVulkanAutoSkip(dir, '1.2.4')).toBe('start-failed')
     clearVulkanAutoSkip(dir)
-    expect(readVulkanAutoSkip(dir)).toBeNull()
-    writeVulkanAutoSkip(dir, 'not-a-reason' as 'start-failed')
-    expect(readVulkanAutoSkip(dir)).toBeNull()
+    expect(readVulkanAutoSkip(dir, '1.2.4')).toBeNull()
+    fs.writeFileSync(file, '{"reason":"ready-timeout"}\n')
+    expect(readVulkanAutoSkip(dir, '1.2.4')).toBeNull()
+    expect(fs.existsSync(file)).toBe(false)
     fs.rmSync(dir, { recursive: true, force: true })
   })
 })
