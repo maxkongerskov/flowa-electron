@@ -9,9 +9,9 @@
     "resolveJsonModule": true,
     "types": ["node"],
     "baseUrl": ".",
-    "paths": { "@shared/*": ["src/shared/*"] },
+    "paths": { "@shared/*": ["src/shared/*"], "@license/*": ["src/license/*"] },
     "composite": true
   },
-  "include": ["electron.vite.config.ts", "vitest.config.ts", "src/main/**/*", "src/preload/**/*", "src/shared/**/*", "tests/**/*"],
+  "include": ["electron.vite.config.ts", "vitest.config.ts", "src/main/**/*", "src/preload/**/*", "src/shared/**/*", "src/license/**/*", "tests/**/*", "config/products.json"],
   "exclude": ["tests/audio-capture.test.ts"]
 }

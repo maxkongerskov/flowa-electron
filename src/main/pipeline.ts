@@ -14,6 +14,7 @@ import type { CaptureResult, CaptureStartRequest } from '@shared/types'
 import { insertingRecent, newDictation, recentLimit, type Dictation } from '@shared/recent'
 import { appearsSilent } from '@shared/audioMath'
 import { decodeWav16, encodeWav16 } from '@shared/wav'
+import { recordedAudioSeconds } from '../license/usage'
 import { machineNoun, maxDurationStoppedMessage, modelNotReadyMessage, silenceMessage } from '@shared/status'
 import { maxDurationSeconds, PrefKey } from '@shared/prefs'
 import { Transcriber } from './transcriber'
@@ -38,6 +39,12 @@ export interface CaptureBridge {
   cancel(generation: number): void
 }
 
+/** License gate. A throw here must not stop dictation. */
+export interface DictationGate {
+  canStart(): { ok: true; meter: boolean } | { ok: false }
+  noteSaved(recordedAudioSeconds: number, meter: boolean): void
+}
+
 export class DictationPipeline extends EventEmitter {
   readonly transcriber = new Transcriber()
   recent: Dictation[] = loadRecent()
@@ -47,6 +54,8 @@ export class DictationPipeline extends EventEmitter {
   private sessionTarget: Promise<TargetApp | null> | null = null
   private generation = 0
   private queue: Promise<void> = Promise.resolve()
+  private gate: DictationGate | null = null
+  private takeMeter = false
 
   constructor(private capture: CaptureBridge) {
     super()
@@ -90,9 +99,26 @@ export class DictationPipeline extends EventEmitter {
     void this.transcriber.loadIfNeeded()
   }
 
+  setGate(gate: DictationGate | null): void {
+    this.gate = gate
+  }
+
   /** Start recording; binds the paste target to this session. */
   async start(target: Promise<TargetApp | null>, microphoneUID: string): Promise<boolean> {
     this.lastErrorMessage = null
+    let decision: { ok: true; meter: boolean } | { ok: false } = { ok: true, meter: false }
+    try {
+      decision = this.gate?.canStart() ?? { ok: true, meter: false }
+    } catch (err) {
+      console.error('[Flowa] license gate failed open', err instanceof Error ? err.message : err)
+      decision = { ok: true, meter: false }
+    }
+    if (!decision.ok) {
+      this.emit('showMainWindow')
+      this.changed()
+      return false
+    }
+    this.takeMeter = decision.meter
     this.sessionTarget = target
     this.generation += 1
     const res = await this.capture.start({
@@ -138,11 +164,13 @@ export class DictationPipeline extends EventEmitter {
 
     const wavPath = path.join(os.tmpdir(), `flowa-${crypto.randomUUID().slice(0, 8)}.wav`)
     fs.writeFileSync(wavPath, encodeWav16(result.samples))
+    const recordedSeconds = recordedAudioSeconds(result.samples.length)
+    const meter = this.takeMeter
 
     // Single-flight queue. A thrown job is logged and does not poison the chain.
     this.queue = continueQueue(
       this.queue,
-      () => this.runTranscription(wavPath, target, language, result.stoppedForMaxDuration, maxMinutes),
+      () => this.runTranscription(wavPath, target, language, result.stoppedForMaxDuration, maxMinutes, recordedSeconds, meter),
       (err) => {
         console.error('[Flowa] transcription queue failed', err instanceof Error ? err.message : err)
       }
@@ -167,7 +195,9 @@ export class DictationPipeline extends EventEmitter {
     targetPromise: Promise<TargetApp | null> | null,
     language: string | null,
     hitMax: boolean,
-    maxMinutes: number
+    maxMinutes: number,
+    recordedSeconds: number,
+    meter: boolean
   ): Promise<void> {
     this.isTranscribing = true
     this.changed()
@@ -210,6 +240,11 @@ export class DictationPipeline extends EventEmitter {
       const entry = newDictation(text, target?.name ?? null, new Date())
       this.recent = insertingRecent(entry, this.recent, recentLimit)
       saveRecent(this.recent)
+      try {
+        this.gate?.noteSaved(recordedSeconds, meter)
+      } catch (err) {
+        console.error('[Flowa] license meter failed open', err instanceof Error ? err.message : err)
+      }
       if (hitMax) this.lastErrorMessage = maxDurationStoppedMessage(maxMinutes)
     } finally {
       fs.rmSync(wavPath, { force: true })

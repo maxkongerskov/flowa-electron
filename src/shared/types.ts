@@ -6,6 +6,7 @@ import type { Dictation } from './recent'
 import type { Prefs } from './prefs'
 import type { UpdateState } from './updates'
 import type { EngineNotice } from './speech'
+import type { LicenseSnapshot } from '../license/types'
 
 export type { UpdateState }
 
@@ -87,6 +88,8 @@ export interface AppState {
   engineNotices: EngineNotice[]
   /** GitHub release check. Idle unless a newer version, or a manual check, has something to say. */
   update: UpdateState
+  /** Free-mode meter and license. Always present; a failed module does not lock dictation. */
+  license: LicenseSnapshot
 }
 
 /** Flow Bar window: what main tells the bar renderer. */

@@ -11,6 +11,7 @@ import { hardwareChoices, hardwareHint, speechModelChoices, speechModelHint } fr
 import { shortcutLimitNote } from '@shared/shortcut'
 import { ConflictBanner, ErrorBanner, PermissionBanner, StatusBanner, UpdateBanner } from '../components/Banners'
 import { DarkModeToggle, LanguagePicker, RecentRow, StatusPill } from '../components/HomeChrome'
+import { LicenseDialogCard, LicenseSettingsRow, RemainingBadge } from '../components/LicenseCard'
 import { ShortcutField } from '../components/ShortcutField'
 import { AcknowledgementsView } from './AcknowledgementsView'
 
@@ -87,6 +88,7 @@ export function HomeView({ state: s }: { state: AppState }) {
           <span style={{ fontSize: 17, fontWeight: 600 }}>Flowa</span>
         </div>
         <div style={{ flex: 1 }} />
+        {s.license.remainingLabel && <RemainingBadge label={s.license.remainingLabel} />}
         <StatusPill isReady={s.allGranted} />
         <DarkModeToggle isOn={p['flowa.colorScheme.dark']} onChange={(v) => void f.setPref('flowa.colorScheme.dark', v)} />
       </div>
@@ -145,6 +147,8 @@ export function HomeView({ state: s }: { state: AppState }) {
               action={() => void f.action('requestAccessibility')}
             />
           )}
+
+          {s.license.dialog && <LicenseDialogCard dialog={s.license.dialog} />}
 
           <UpdateBanner state={s.update} onOpen={() => void f.action('openUpdate')} onDismiss={() => void f.action('dismissUpdateNote')} />
 
@@ -243,6 +247,8 @@ export function HomeView({ state: s }: { state: AppState }) {
                 <ChevronRight size={12} strokeWidth={3} />
               </button>
             </Row>
+            <div className="hairline" />
+            <LicenseSettingsRow license={s.license} />
             <div className="hairline" />
             <Row icon={RefreshCw} label="Version">
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

@@ -1,7 +1,7 @@
 // Flowa — Electron main process. Port of FlowaApp.swift (app root, window,
 // menu bar extra, app delegate) wiring the ported services together.
 
-import { app, autoUpdater, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, session, clipboard } from 'electron'
+import { app, autoUpdater, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, session, shell } from 'electron'
 import type { AppState } from '@shared/types'
 import { PrefKey, normalizedMicrophoneUID, sanitizedMaxDurationMinutes, type Prefs } from '@shared/prefs'
 import { defaultShortcut, needsInputMonitoring, shortcutKind, shortcutLabel, validateShortcut } from '@shared/shortcut'
@@ -26,6 +26,7 @@ import { isE2EBuild } from '@shared/updateTrust'
 import { E2E_BUNDLE_ID, RELEASE_BUNDLE_ID, isQuittingForUpdate, markQuittingForUpdate, shouldKeepWindowOpen } from '../../scripts/update-install.mjs'
 import { installE2ESession } from './e2eSession'
 import { noteE2E, UpdateChecker } from './updates'
+import { startLicense, type RunningLicense } from './licenseHost'
 
 configureUserDataPath()
 if (isE2EBuild()) {
@@ -50,7 +51,14 @@ if (!skipSingleInstance && !app.requestSingleInstanceLock()) {
 
 async function main(): Promise<void> {
   await app.whenReady()
-  noteE2E(`booted ${app.getVersion()} pid=${process.pid}`)
+  let uiReady = false
+  const license: RunningLicense = startLicense({
+    version: app.getVersion(),
+    packaged: app.isPackaged,
+    userDataDir: app.getPath('userData'),
+    uiReady: () => uiReady
+  })
+  noteE2E(`booted ${app.getVersion()} pid=${process.pid} license legacy=${license.legacyWord}`)
 
   // Only our own pages may use the microphone.
   const ours = (url: string): boolean => url.startsWith('file://') || (!!process.env.ELECTRON_RENDERER_URL && url.startsWith(process.env.ELECTRON_RENDERER_URL))
@@ -63,6 +71,10 @@ async function main(): Promise<void> {
   let mainWindow: BrowserWindow | null = null
   const bar = new FlowBar()
   const pipeline = new DictationPipeline(bar)
+  pipeline.setGate({
+    canStart: () => license.canStart(),
+    noteSaved: (seconds, meter) => license.noteSaved(seconds, meter)
+  })
   const hotkey = new GlobalHotkey(pipeline, bar)
   bar.onCrashed = () => {
     if (hotkey.session === 'recording') hotkey.cancelListening()
@@ -76,6 +88,7 @@ async function main(): Promise<void> {
   let stateRevision = 0
 
   const showMain = (): void => {
+    uiReady = true
     if (!mainWindow || mainWindow.isDestroyed()) {
       mainWindow = createMainWindow(prefs.get(PrefKey.colorSchemeDark))
       mainWindow.on('close', (e) => {
@@ -93,6 +106,7 @@ async function main(): Promise<void> {
       })
       mainWindow.on('focus', () => {
         void permissions.check()
+        void license.tick().then(() => broadcast())
         if (!hotkey.suspended && !hotkey.isAuthorized) void hotkey.restart()
       })
     } else {
@@ -181,7 +195,8 @@ async function main(): Promise<void> {
       },
       engine: { modelName: t.modelName, ...t.engineInfo },
       engineNotices: collectEngineNotices(t.notice),
-      update: updates.state
+      update: updates.state,
+      license: license.snapshot()
     }
   }
 
@@ -446,7 +461,32 @@ async function main(): Promise<void> {
     resumeShortcut: () => hotkey.resume(),
     checkForUpdates: () => checkForUpdates(),
     openUpdate: () => updates.accept(),
-    dismissUpdateNote: () => updates.dismissNote()
+    dismissUpdateNote: () => updates.dismissNote(),
+    licenseActivate: async (key) => {
+      if (typeof key !== 'string') return
+      await license.activate(key)
+      broadcast()
+    },
+    licenseDeactivate: async () => {
+      await license.deactivate()
+      broadcast()
+    },
+    licenseDismiss: () => {
+      license.dismiss()
+      broadcast()
+    },
+    licenseOpenKeyEntry: () => {
+      license.openKeyEntry()
+      broadcast()
+    },
+    licenseOpenPurchase: () => {
+      const url = license.purchaseUrl()
+      if (url) void shell.openExternal(url)
+    },
+    licenseOpenPortal: () => {
+      const url = license.portalUrl()
+      if (url) void shell.openExternal(url)
+    }
   }
 
   ipcMain.handle('action', async (e, name: unknown, ...args: unknown[]) => {
@@ -507,6 +547,10 @@ async function main(): Promise<void> {
   }
   pipeline.prewarm()
   broadcast()
+  void license.tick().then(() => broadcast())
+  setInterval(() => {
+    void license.tick().then(() => broadcast())
+  }, 15 * 60 * 1000)
   void updates.check(false)
   void runSelfTest(pipeline, bar)
 }

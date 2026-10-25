@@ -1,0 +1,34 @@
+{
+  "apiVersionHeader": "Flowa-Api-Version",
+  "apiVersion": "1",
+  "products": [
+    {
+      "id": "flowa",
+      "displayName": "Flowa",
+      "domains": {
+        "license": "license.flowa.app",
+        "site": "flowa.app"
+      },
+      "licenseBaseUrl": "https://license.flowa.app/v1",
+      "purchaseUrl": "https://flowa.app/buy",
+      "portalUrl": "https://flowa.app/account",
+      "deviceLimit": 3,
+      "texts": {
+        "dailyCapBody": "Dagens gratis minutter er brugt. Nye minutter kl. 00:00.",
+        "buyButton": "Køb {productName} (€29, én gang)",
+        "enterKeyButton": "Indtast licensnøgle",
+        "deviceLimit": "Licensen er allerede brugt på {deviceLimit} enheder. Fjern en enhed i kundeportalen {portalUrl}, og prøv igen. {productName} virker imens i gratis-tilstand.",
+        "reactivateOffer": "Denne enhed er ikke længere på licensen. Indtast nøglen for at aktivere igen. Dine data er i sikkerhed, og {productName} virker imens i gratis-tilstand.",
+        "invalidKey": "Den nøgle kender vi ikke. Tjek at hele nøglen er med, eller find den i kundeportalen.",
+        "networkError": "Vi kan ikke nå licensserveren. Prøv igen senere.",
+        "rateLimit": "For mange forsøg. Prøv igen om lidt.",
+        "fingerprintMismatch": "{productName} skal aktiveres på denne enhed.",
+        "checkinNudge": "Gå gerne online en gang, så vi kan bekræfte din licens. {productName} virker som normalt.",
+        "deactivateFailed": "Vi kunne ikke fjerne enheden. Prøv igen, når du er online.",
+        "keySubmit": "Aktivér",
+        "remainingMinutes": "{minutes} min tilbage i dag",
+        "grace": "Licensen er refunderet eller tilbagekaldt. {productName} virker fuldt ud til {when}. Dine data er i sikkerhed."
+      }
+    }
+  ]
+}

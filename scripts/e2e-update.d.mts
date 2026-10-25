@@ -21,6 +21,8 @@ export function assertTamperRehearsal(
   to?: string
 ): void
 export function assertMacRehearsal(positive: string, negative: string, from?: string, to?: string): void
+export function legacyAfterBoot(text: string, version: string): 'unlimited' | 'free' | 'error' | 'missing'
+export function assertLegacyRehearsal(updatedStatus: string, freshStatus: string, from?: string, to?: string): void
 export function rewriteChecksumKeepSignature(ymlPath: string, filePath: string): Promise<void>
 export function removeTreeRetrying(
   target: string,

@@ -401,6 +401,10 @@ async function linuxAppImage(work, publicKey, privateKey) {
     const positive = await launch('positive', pristine, 'positive', 180_000)
     console.log('--- positive status ---')
     console.log(positive.trim())
+    const fresh = await launch('fresh', toImage, (text) => text.includes(`booted ${TO}`) && text.includes('license legacy='), 180_000)
+    console.log('--- fresh install status ---')
+    console.log(fresh.trim())
+    assertLegacyRehearsal(positive, fresh)
 
     const negativeImage = path.join(work, 'Flowa-negative.AppImage')
     copyFileSync(fromImage, negativeImage)
@@ -471,6 +475,10 @@ async function linuxDeb(work, publicKey, privateKey) {
     const positive = await launchDeb('positive', 'positive')
     console.log('--- deb status ---')
     console.log(positive.trim())
+    const fresh = await launchDeb('fresh', (text) => text.includes(`booted ${TO}`) && text.includes('license legacy='))
+    console.log('--- deb fresh install status ---')
+    console.log(fresh.trim())
+    assertLegacyRehearsal(positive, fresh)
     const published = path.join(feed, path.basename(toDeb))
     flipLastByte(published)
     await rewriteChecksumKeepSignature(path.join(feed, 'latest-linux.yml'), published)
@@ -517,6 +525,28 @@ export function assertTamperRehearsal(positive, negative, label = 'update', from
 
 export function assertMacRehearsal(positive, negative, from = FROM, to = TO) {
   assertTamperRehearsal(positive, negative, 'Mac', from, to)
+}
+
+/**
+ * The license word is written on the same line as the boot note.
+ * An in-place update from the pre-license rehearsal build is unlimited.
+ * A later boot of that same version with a clean profile is free.
+ */
+export function legacyAfterBoot(text, version) {
+  if (typeof text !== 'string') return 'missing'
+  const at = text.lastIndexOf(`booted ${version}`)
+  if (at < 0) return 'missing'
+  const match = text.slice(at).match(/license legacy=(unlimited|free|error)/)
+  return match ? match[1] : 'missing'
+}
+
+export function assertLegacyRehearsal(updatedStatus, freshStatus, from = FROM, to = TO) {
+  const updated = legacyAfterBoot(updatedStatus, to)
+  const fresh = legacyAfterBoot(freshStatus, to)
+  const errors = []
+  if (updated !== 'unlimited') errors.push(`in-place update ${from} -> ${to} must be legacy unlimited, saw ${updated}`)
+  if (fresh !== 'free') errors.push(`fresh install of ${to} must be free, saw ${fresh}`)
+  if (errors.length > 0) throw new Error(`${errors.join('\n')}\n--- updated ---\n${updatedStatus}\n--- fresh ---\n${freshStatus}`)
 }
 
 async function mac(work, publicKey, privateKey, arch) {
@@ -568,6 +598,10 @@ async function mac(work, publicKey, privateKey, arch) {
     const positive = await launch('positive', fromApp, 'positive')
     console.log('--- positive status ---')
     console.log(positive.trim())
+    const fresh = await launch('fresh', toApp, (text) => text.includes(`booted ${TO}`) && text.includes('license legacy='))
+    console.log('--- fresh install status ---')
+    console.log(fresh.trim())
+    assertLegacyRehearsal(positive, fresh)
     flipLastByte(zip)
     await rewriteChecksumKeepSignature(path.join(feed, 'latest-mac.yml'), zip)
     const negative = await launch('negative', stayApp, (text) => text.includes(`booted ${FROM}`) && text.includes('rejected'))
@@ -607,12 +641,12 @@ async function windows(work, publicKey, privateKey) {
       await new Promise((resolve) => setTimeout(resolve, 500))
     }
   }
-  const launchWin = async (label, predicate) => {
+  const launchWin = async (label, predicate, extraEnv = {}) => {
     const home = path.join(work, `home-win-${label}`)
     const status = path.join(work, `status-win-${label}.txt`)
     const log = path.join(work, `log-win-${label}.txt`)
     require('node:fs').mkdirSync(home, { recursive: true })
-    const env = appEnv(process.env, url, publicKey, status, home)
+    const env = { ...appEnv(process.env, url, publicKey, status, home), ...extraEnv }
     return finishLaunch(launchAndWait(exe, ['--no-sandbox'], env, status, predicate, 180_000, log))
   }
   try {
@@ -620,6 +654,13 @@ async function windows(work, publicKey, privateKey) {
     const positive = await launchWin('positive', 'positive')
     console.log('--- windows status ---')
     console.log(positive.trim())
+    const fresh = await launchWin('fresh', (text) => text.includes(`booted ${TO}`) && text.includes('license legacy='), {
+      APPDATA: path.join(work, 'home-win-fresh', 'Roaming'),
+      LOCALAPPDATA: path.join(work, 'home-win-fresh', 'Local')
+    })
+    console.log('--- windows fresh install status ---')
+    console.log(fresh.trim())
+    assertLegacyRehearsal(positive, fresh)
     const published = path.join(feed, path.basename(toExe))
     flipLastByte(published)
     await rewriteChecksumKeepSignature(path.join(feed, 'latest.yml'), published)
