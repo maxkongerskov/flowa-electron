@@ -33,5 +33,6 @@ export function removeTreeRetrying(
   }
 ): Promise<boolean>
 export function cleanupE2ERehearsal(statusText?: string): Promise<void>
+export function passwordlessPkexecDir(dir: string): string
 export function windowsInstallerArgs(): string[]
 export function windowsInstalledExe(localAppData: string, productName?: string): string

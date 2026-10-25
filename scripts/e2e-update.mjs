@@ -430,12 +430,17 @@ export function passwordlessPkexecDir(dir) {
   const fs = require('node:fs')
   fs.mkdirSync(dir, { recursive: true })
   const wrapper = path.join(dir, 'pkexec')
-  fs.writeFileSync(wrapper, `#!/bin/sh
-if [ "$1" = "--disable-internal-agent" ]; then
-  shift
-fi
-exec sudo -n "$@"
-`)
+  // Built as plain strings. A template that starts a line with #! is a syntax
+  // error for the Windows test loader, and TypeScript drops the export.
+  const lines = [
+    '#!' + '/bin/sh',
+    'if [ "$1" = "--disable-internal-agent" ]; then',
+    '  shift',
+    'fi',
+    'exec sudo -n "$@"',
+    ''
+  ]
+  fs.writeFileSync(wrapper, lines.join('\n'))
   fs.chmodSync(wrapper, 0o755)
   return dir
 }
