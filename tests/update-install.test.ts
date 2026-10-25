@@ -252,7 +252,7 @@ describe('e2e session survives a relaunch without the test environment', () => {
 
   it('drops a non-local feed and a relative status path', () => {
     const env: NodeJS.ProcessEnv = {
-      FLOWA_UPDATE_FEED: 'https://github.com/maxkongerskov/flowa-releases/',
+      FLOWA_UPDATE_FEED: 'https://example.com/updates/',
       FLOWA_E2E_STATUS: 'status.txt',
       FLOWA_UPDATE_PUBLIC_KEY: 'not a key'
     }
@@ -269,7 +269,7 @@ describe('e2e session survives a relaunch without the test environment', () => {
     })
     expect(result.persisted).toBe(false)
     expect(stored).toBe('')
-    expect(env.FLOWA_UPDATE_FEED).toBe('https://github.com/maxkongerskov/flowa-releases/')
+    expect(env.FLOWA_UPDATE_FEED).toBe('https://example.com/updates/')
     expect(parseE2ESession('not json', 'darwin')).toBeNull()
   })
 

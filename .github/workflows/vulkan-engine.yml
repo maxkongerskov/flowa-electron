@@ -241,7 +241,11 @@ jobs:
           Write-Host "vulkan-tree-bytes $vulkan"
           if (-not (Test-Path release\win-unpacked\resources\bin\whisper-server.exe)) { exit 1 }
           if (-not (Test-Path release\win-unpacked\resources\bin\whisper.dll)) { exit 1 }
+          if (-not (Test-Path release\win-unpacked\resources\bin\ggml-cpu-x64.dll)) { exit 1 }
           if (-not (Test-Path release\win-unpacked\resources\bin\whisper-server-vulkan\whisper-server.exe)) { exit 1 }
+          foreach ($name in @('SDL2.dll', 'llama.dll', 'wchess.exe', 'whisper-talk-llama.exe', 'whisper-cli.exe', 'test-vad.exe', 'parakeet.dll', 'bench.exe')) {
+            if (Test-Path "release\win-unpacked\resources\bin\$name") { Write-Error "unexpected $name in the CPU engine"; exit 1 }
+          }
       - name: Upload Vulkan engine
         uses: actions/upload-artifact@v4
         with:

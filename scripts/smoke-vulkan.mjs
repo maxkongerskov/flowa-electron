@@ -14,6 +14,7 @@
 // lavapipe (VK_PHYSICAL_DEVICE_TYPE_CPU), which the automatic picker skips.
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
+import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -46,7 +47,7 @@ const vulkanCli = path.join(vulkanDir, exe('whisper-cli'))
 const cpuServer = path.join(binDir, exe('whisper-server'))
 const vulkanServer = path.join(vulkanDir, exe('whisper-server'))
 
-for (const file of [cpuCli, cpuServer, vulkanCli, vulkanServer, model, wav]) {
+for (const file of [cpuServer, vulkanServer, model, wav]) {
   if (!exists(file)) {
     console.error(`missing ${file}`)
     process.exit(1)
@@ -58,6 +59,57 @@ function libraryEnv(dir, extra = {}) {
   if (windows) env.PATH = [dir, env.PATH].filter(Boolean).join(';')
   else env.LD_LIBRARY_PATH = [dir, env.LD_LIBRARY_PATH].filter(Boolean).join(':')
   return env
+}
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer()
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      const port = address && typeof address === 'object' ? address.port : 0
+      server.close(() => resolve(port))
+    })
+  })
+}
+
+async function runServer(bin, gpu, env, timeoutMs) {
+  const port = await freePort()
+  const args = ['-m', model, '--host', '127.0.0.1', '--port', String(port), '-t', '4', '-l', 'en']
+  if (!gpu) args.push('-ng')
+  const started = Date.now()
+  const child = spawn(bin, args, { cwd: path.dirname(bin), env, windowsHide: true })
+  let log = ''
+  child.stdout?.on('data', (chunk) => { log += chunk.toString('utf8') })
+  child.stderr?.on('data', (chunk) => { log += chunk.toString('utf8') })
+  const deadline = Date.now() + timeoutMs
+  let ready = false
+  let error = ''
+  try {
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        error = `exited ${child.exitCode} before listening`
+        break
+      }
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(1000) })
+        if (response.ok) {
+          ready = true
+          break
+        }
+      } catch {
+        /* model still loading */
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250))
+    }
+    if (!ready && !error) error = `did not listen within ${timeoutMs}ms`
+  } finally {
+    if (child.exitCode === null) {
+      child.kill('SIGKILL')
+      await new Promise((resolve) => child.once('close', () => resolve()))
+    }
+  }
+  return { ready, ms: Date.now() - started, error, tail: log.trim().split(/\r?\n/).slice(-12).join('\n') }
 }
 
 function cliArgs(gpu) {
@@ -117,7 +169,44 @@ function tail(result) {
   return `${result.stderr}\n${result.stdout}`.trim().split(/\r?\n/).slice(-12).join('\n')
 }
 
-const report = { cpu: null, vulkan: null, missingLoader: null }
+const report = { cpuServer: null, vulkanServer: null, cpu: null, vulkan: null, missingLoader: null }
+
+const cpuServerResult = await runServer(cpuServer, false, libraryEnv(binDir), 120_000)
+report.cpuServer = { ms: cpuServerResult.ms, ready: cpuServerResult.ready }
+console.log(`CPU-SERVER ${cpuServerResult.ms}ms ready=${cpuServerResult.ready}`)
+if (!cpuServerResult.ready) {
+  console.error(cpuServerResult.tail)
+  console.error(`CPU whisper-server ${cpuServerResult.error}`)
+  process.exit(1)
+}
+
+const lvpIcd = [
+  '/usr/share/vulkan/icd.d/lvp_icd.x86_64.json',
+  '/usr/share/vulkan/icd.d/lvp_icd.json'
+].find((file) => exists(file))
+const vulkanServerEnv = libraryEnv(vulkanDir, { GGML_VK_VISIBLE_DEVICES: '0' })
+if (lvpIcd) {
+  vulkanServerEnv.VK_DRIVER_FILES = lvpIcd
+  vulkanServerEnv.VK_ICD_FILENAMES = lvpIcd
+}
+const vulkanServerResult = await runServer(vulkanServer, true, vulkanServerEnv, TIMEOUT_MS)
+report.vulkanServer = { ms: vulkanServerResult.ms, ready: vulkanServerResult.ready, lavapipe: lvpIcd ?? null }
+console.log(`VULKAN-SERVER ${vulkanServerResult.ms}ms ready=${vulkanServerResult.ready}`)
+if (!vulkanServerResult.ready) {
+  console.error(vulkanServerResult.tail)
+  console.error(`Vulkan whisper-server ${vulkanServerResult.error}`)
+  process.exit(1)
+}
+
+if (!exists(cpuCli) || !exists(vulkanCli)) {
+  if (requireVulkan) {
+    console.error('whisper-cli is required for --require-vulkan transcript comparison')
+    process.exit(1)
+  }
+  console.log('whisper-cli is not staged; transcript comparison skipped')
+  console.log(JSON.stringify(report))
+  process.exit(0)
+}
 
 const cpu = await runCli(cpuCli, false, libraryEnv(binDir), TIMEOUT_MS)
 report.cpu = { ms: cpu.ms, code: cpu.code, text: cpu.text, timedOut: cpu.timedOut }
@@ -148,15 +237,8 @@ if (missing.timedOut) {
   process.exit(1)
 }
 
-const lvp = [
-  '/usr/share/vulkan/icd.d/lvp_icd.x86_64.json',
-  '/usr/share/vulkan/icd.d/lvp_icd.json'
-].find((file) => exists(file))
-const vulkanEnv = libraryEnv(vulkanDir, { GGML_VK_VISIBLE_DEVICES: '0' })
-if (lvp) {
-  vulkanEnv.VK_DRIVER_FILES = lvp
-  vulkanEnv.VK_ICD_FILENAMES = lvp
-}
+const lvp = lvpIcd
+const vulkanEnv = vulkanServerEnv
 const vulkan = await runCli(vulkanCli, true, vulkanEnv, TIMEOUT_MS)
 report.vulkan = { ms: vulkan.ms, code: vulkan.code, text: vulkan.text, timedOut: vulkan.timedOut, lavapipe: lvp ?? null }
 console.log(`VULKAN ${vulkan.ms}ms code=${vulkan.code} text=${JSON.stringify(vulkan.text)}`)

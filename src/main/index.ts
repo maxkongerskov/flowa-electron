@@ -51,6 +51,7 @@ if (!skipSingleInstance && !app.requestSingleInstanceLock()) {
 
 async function main(): Promise<void> {
   await app.whenReady()
+  console.log(`[Flowa] version ${app.getVersion()}`)
   noteE2E(`booted ${app.getVersion()} pid=${process.pid}`)
   // A skip written by an older build is dropped before the first engine plan.
   readVulkanAutoSkip(paths.userData, app.getVersion())

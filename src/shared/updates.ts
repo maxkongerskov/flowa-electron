@@ -4,14 +4,8 @@
 // The updater zip is never offered as a link. Unsigned macOS builds, and Linux
 // packages electron-updater cannot apply, open the public installer instead.
 
-/** Feed baked into 1.2.3 and later. 1.2.2 still reads flowa-electron. */
+/** GitHub Releases feed baked into the app. 1.2.2 and later read this repo. */
 export const UPDATE_REPOSITORY = {
-  owner: 'maxkongerskov',
-  repo: 'flowa-releases'
-} as const
-
-/** 1.2.3 is also published here so installs whose feed is still flowa-electron can update. */
-export const UPDATE_BRIDGE_REPOSITORY = {
   owner: 'maxkongerskov',
   repo: 'flowa-electron'
 } as const
@@ -137,8 +131,7 @@ export function isFlowaReleaseUrl(url: string): boolean {
   try {
     const parsed = new URL(url)
     if (parsed.protocol !== 'https:' || parsed.hostname !== 'github.com') return false
-    const repos = [UPDATE_REPOSITORY.repo, UPDATE_BRIDGE_REPOSITORY.repo]
-    return repos.some((repo) => parsed.pathname.startsWith(`/${UPDATE_REPOSITORY.owner}/${repo}/`))
+    return parsed.pathname.startsWith(`/${UPDATE_REPOSITORY.owner}/${UPDATE_REPOSITORY.repo}/`)
   } catch {
     return false
   }

@@ -1,9 +1,6 @@
 #!/bin/bash
-# Upload release/ to GitHub Releases.
-# 1.2.3 and later check maxkongerskov/flowa-releases. 1.2.2 still checks
-# maxkongerskov/flowa-electron, so 1.2.3 is uploaded to both repos with the
-# same files. latest*.yml keeps relative urls, so one copy works on either repo.
-# Later versions upload to flowa-releases only.
+# Upload release/ to GitHub Releases on maxkongerskov/flowa-electron.
+# That is the only update feed. latest*.yml keeps relative urls.
 #
 # The release stays a draft until every file has been uploaded and the feed
 # still matches. Only files that exist are uploaded (a missing
@@ -13,8 +10,7 @@
 #
 #   bash scripts/publish-release.sh
 #   bash scripts/publish-release.sh release 1.2.3
-# gh must be logged in with access to both repos for the 1.2.3 bridge.
-# flowa-releases is created by hand before the first publish. This script does not create it.
+# gh must be logged in with access to maxkongerskov/flowa-electron.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -23,10 +19,7 @@ VERSION="${2:-$(node -p "require('./package.json').version")}"
 if [ -z "${FLOWA_UPDATE_KEY:-}" ] && [ -f "${HOME}/.config/flowa/update-private.pem" ]; then
   export FLOWA_UPDATE_KEY="${HOME}/.config/flowa/update-private.pem"
 fi
-RELEASE_REPO="maxkongerskov/flowa-releases"
-# 1.2.2 reads this repo. Only the bridge version is copied here.
-BRIDGE_REPO="maxkongerskov/flowa-electron"
-BRIDGE_VERSION="1.2.3"
+RELEASE_REPO="maxkongerskov/flowa-electron"
 TAG="v${VERSION}"
 
 [ -d "$OUT" ] || { echo "Missing $OUT. Run bash scripts/build-release.sh first." >&2; exit 1; }
@@ -108,7 +101,3 @@ publish_repo() {
 }
 
 publish_repo "$RELEASE_REPO"
-if [ "$VERSION" = "$BRIDGE_VERSION" ]; then
-  echo "▶ 1.2.3 bridge: identical artifacts and latest*.yml to ${BRIDGE_REPO}"
-  publish_repo "$BRIDGE_REPO"
-fi

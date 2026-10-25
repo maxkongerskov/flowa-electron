@@ -99,7 +99,7 @@ Before that command will succeed:
 - a clean git tree, on a branch
 - Developer ID `0EF5E5C4F619F8322BB10EE8255603A26AB18553` in the keychain (`security find-identity`), or set `FLOWA_SIGN_ID`
 - notarytool keychain profile `AC_PASSWORD` (`xcrun notarytool history --keychain-profile AC_PASSWORD`), or set `FLOWA_NOTARY_PROFILE`
-- `gh auth status` for `maxkongerskov/flowa-releases`, and for `maxkongerskov/flowa-electron` when publishing 1.2.3
+- `gh auth status` for `maxkongerskov/flowa-electron`
 - staged engines `resources/bin/{darwin-arm64,darwin-x64,win32-x64,linux-x64}/`
 - the Vulkan engines from the **Vulkan whisper engine** workflow, placed at
   `resources/bin/win32-x64/whisper-server-vulkan/` and
@@ -128,11 +128,15 @@ Before the command, on the Mac that will publish:
    `whisper-vulkan-win32-x64` and `whisper-vulkan-linux-x64`.
 2. Replace `resources/bin/win32-x64/whisper-server-vulkan/` with the Windows artifact.
    Replace `resources/bin/linux-x64/whisper-server-vulkan/` with the Linux artifact.
-3. Leave the CPU files in those two folders as they were for 1.2.2 (official
-   `whisper-bin-x64.zip` and `whisper-bin-ubuntu-x64.tar.gz` from whisper.cpp `b5454`:
-   `whisper-server`, `whisper.dll` / `libwhisper.so.1`, and the ggml CPU libraries).
-   Leave `resources/bin/darwin-arm64` and `resources/bin/darwin-x64` on the existing
-   Metal builds. Do not copy Vulkan's `libggml` / `whisper.dll` up into the CPU folder.
+3. Leave the CPU files beside that folder. Linux is the official
+   `whisper-bin-ubuntu-x64.tar.gz` tree. Windows is the official
+   `whisper-bin-x64.zip`, limited to what `whisper-server.exe` loads:
+   `whisper-server.exe`, `whisper.dll`, `ggml.dll`, `ggml-base.dll`, and the
+   `ggml-cpu-*.dll` variants. `node scripts/stage-cpu-engine.mjs --windows`
+   copies that set and leaves out SDL2, llama, wchess, talk-llama, and the
+   other upstream example binaries. Leave `resources/bin/darwin-arm64` and
+   `resources/bin/darwin-x64` on the existing Metal builds. Do not copy
+   Vulkan's `libggml` / `whisper.dll` up into the CPU folder.
 4. `resources/bin/<platform>-<arch>/whisper-backends.json` should contain
    `"vulkan": true`. The app also detects the `whisper-server-vulkan/whisper-server`
    file if the json is stale.
@@ -206,11 +210,10 @@ Linux is
 publishes a release. The real 1.2.2 → 1.2.3 update still has to be run on a
 Mac, a Windows machine, and a Linux machine before `npm run release` publishes.
 
-1.2.3 is the bridge release. The app it installs checks `maxkongerskov/flowa-releases`.
-`scripts/publish-release.sh` also uploads that same 1.2.3 to `maxkongerskov/flowa-electron`,
-which is the feed baked into 1.2.2. Later versions upload to `flowa-releases` only.
-Create the public repo, check 1.2.2 → 1.2.3 → a throwaway 1.2.4, and roll a bad 1.2.3
-back, using `RELEASING.md`. This branch does not create the repo or publish.
+The installed app checks `maxkongerskov/flowa-electron`, the same repo 1.2.2
+already uses. `scripts/publish-release.sh` uploads there only. Run the
+1.2.2 → 1.2.3 checks in `RELEASING.md` before publishing. This branch does
+not tag or upload a GitHub Release.
 
 Clearing recent dictations rewrites `recent.json`. It does not erase copies already in
 APFS snapshots or Time Machine.
@@ -443,6 +446,6 @@ MIT (same as Swift-Flowa). whisper.cpp is MIT. The Whisper weights are MIT (Open
 6. **Version number.** App version is 1.2.3 (`package.json`). `npm run release -- 1.2.3` publishes
    that version after tests and a packaged update rehearsal on the release Mac. It does not
    publish until that command is run, and this branch does not tag or upload a GitHub Release.
-   The feed baked into 1.2.3 is `maxkongerskov/flowa-releases`. The bridge upload and rollback
-   are in `RELEASING.md`. `npm run release -- patch` would publish the next patch instead. The
+   The feed baked into 1.2.3 is `maxkongerskov/flowa-electron`. Rollback is in
+   `RELEASING.md`. `npm run release -- patch` would publish the next patch instead. The
    download table above stays on the last installers that were actually published.
