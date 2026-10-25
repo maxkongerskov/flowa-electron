@@ -18,11 +18,11 @@ Flowa bundles the Whisper large-v3 turbo model (1.6 GB) and transcribes locally,
 |---|---|---|
 | **RAM** | 16 GB | 32 GB |
 | **CPU** | Modern 4-core 64-bit CPU (x64 needs AVX2, roughly 2013 or newer) | 8+ cores, or Apple Silicon (M1 or newer) |
-| **GPU** | Not required | Apple Silicon with Metal for the fastest transcription |
+| **GPU** | Not required | Apple Silicon with Metal, or a Vulkan GPU on Windows / Linux (AMD, Intel, or NVIDIA) |
 | **Disk** | 4 GB free | 8 GB free |
 | **OS** | macOS 12+, Windows 10/11 (64-bit), Ubuntu 22.04+ or similar | Latest macOS on Apple Silicon |
 
-The macOS Apple Silicon build uses the GPU via Metal. The current Windows and Linux builds run the speech engine on the CPU; CUDA acceleration is not bundled yet. Linux also needs `libgomp1`.
+The macOS Apple Silicon build uses the GPU via Metal. Windows and Linux ship a Vulkan build of whisper.cpp next to the CPU engine. Automatic mode uses that Vulkan engine when a real Vulkan GPU is present, and the CPU engine otherwise. CUDA is still not bundled. Linux needs `libgomp1`. Vulkan also uses `libvulkan1` when a GPU driver is installed; without it, Flowa stays on the CPU.
 
 ## Download
 
@@ -49,7 +49,7 @@ npm run setup:whisper       # builds whisper.cpp v1.9.5 → resources/bin/<platf
 npm run setup:model         # downloads ggml-large-v3-turbo.bin (1.6 GB, sha1-verified) → models/
 npm run setup:small         # optional: ggml-small.bin (Whisper Small, ~466 MB, sha1-verified) → models/
 # FLOWA_WHISPER_VARIANT=cuda npm run setup:whisper     # whisper-server-cuda
-# FLOWA_WHISPER_VARIANT=vulkan npm run setup:whisper   # whisper-server-vulkan
+# FLOWA_WHISPER_VARIANT=vulkan npm run setup:whisper   # whisper-server-vulkan/ (own libraries)
 npm test                    # unit tests for the ported logic
 npm start                   # build + run the app
 ```
@@ -91,7 +91,7 @@ notarization, stapling, or the feed check leaves no tag on origin.
 ```bash
 npm run release -- patch          # next patch, then build and publish
 npm run release -- minor
-npm run release -- 1.2.2          # package.json is already 1.2.2: build and publish it
+npm run release -- 1.2.3          # package.json is already 1.2.3: build and publish it
 ```
 
 Before that command will succeed:
@@ -101,11 +101,45 @@ Before that command will succeed:
 - notarytool keychain profile `AC_PASSWORD` (`xcrun notarytool history --keychain-profile AC_PASSWORD`), or set `FLOWA_NOTARY_PROFILE`
 - `gh auth status` for `maxkongerskov/flowa-electron`
 - staged engines `resources/bin/{darwin-arm64,darwin-x64,win32-x64,linux-x64}/`
+- the Vulkan engines from the **Vulkan whisper engine** workflow, placed at
+  `resources/bin/win32-x64/whisper-server-vulkan/` and
+  `resources/bin/linux-x64/whisper-server-vulkan/` (see below)
 - `models/ggml-large-v3-turbo.bin` with sha1 `4af2b29d7ec73d781377bfd1758ca957a807e941`
 - an update signing key whose public half is committed (see below)
 
 `electron-builder.release.cjs` bundles the Whisper models and picks `resources/bin/<os>-<arch>/`
 per target, so the Mac build does not ship the macOS engine inside the Windows installer.
+That folder is copied as a whole. `whisper-server-vulkan/` inside the Windows and Linux
+folders is the GPU engine; the flat `whisper-server` next to it is still the CPU engine.
+
+### Vulkan engine (Windows x64 and Linux x64)
+
+whisper.cpp v1.9.5 (`d1be6fde11ac6e0407606b4e42fe72d34add8037`) does not publish a Vulkan
+binary. `.github/workflows/vulkan-engine.yml` builds it with `-DGGML_VULKAN=ON` and
+uploads two artifacts. Linux is built on `ubuntu-22.04` so the binary stays on glibc
+2.34 and libstdc++ 3.4.30, the same ceiling as the official CPU build (`b5454`).
+Do not substitute the upstream `ghcr.io` `main-vulkan` image: that build wants glibc
+2.38 and a `/app/build/bin` run path.
+
+`npm run release` does not compile Vulkan and does not download those artifacts.
+Before the command, on the Mac that will publish:
+
+1. Open the successful **Vulkan whisper engine** run for this commit and download
+   `whisper-vulkan-win32-x64` and `whisper-vulkan-linux-x64`.
+2. Replace `resources/bin/win32-x64/whisper-server-vulkan/` with the Windows artifact.
+   Replace `resources/bin/linux-x64/whisper-server-vulkan/` with the Linux artifact.
+3. Leave the CPU files in those two folders as they were for 1.2.2 (official
+   `whisper-bin-x64.zip` and `whisper-bin-ubuntu-x64.tar.gz` from whisper.cpp `b5454`:
+   `whisper-server`, `whisper.dll` / `libwhisper.so.1`, and the ggml CPU libraries).
+   Leave `resources/bin/darwin-arm64` and `resources/bin/darwin-x64` on the existing
+   Metal builds. Do not copy Vulkan's `libggml` / `whisper.dll` up into the CPU folder.
+4. `resources/bin/<platform>-<arch>/whisper-backends.json` should contain
+   `"vulkan": true`. The app also detects the `whisper-server-vulkan/whisper-server`
+   file if the json is stale.
+
+`npm run release -- 1.2.3` then refuses to start unless both Vulkan servers are on
+disk. The release config still bundles `models/ggml-large-v3-turbo.bin` (and
+`ggml-small.bin` when it has been staged). The Vulkan tree is the only new payload.
 Windows and Linux are cross-built on the Mac (NSIS x64, AppImage, and deb). No Windows host
 and no Wine step. Windows arm64 is not built. A `.deb` install updates itself when `dpkg` or
 `apt` is available; anything else on Linux opens the release page.
@@ -166,8 +200,11 @@ the arm64 zip and the x64 zip. Each one must quit within 20 seconds of
 9.9.0. The rehearsal bundle id is `com.maxkongerskov.FlowaElectron.e2e`, so it
 does not share ShipIt's cache with an installed Flowa.
 Linux is
-`node scripts/e2e-update.mjs`. Windows is the optional Actions workflow
-`.github/workflows/e2e-update-windows.yml` (no secrets).
+`node scripts/e2e-update.mjs`, and the same command on `ubuntu-latest` in
+`.github/workflows/e2e-update-linux.yml` (no secrets). Windows is
+`.github/workflows/e2e-update-windows.yml` (no secrets). Neither rehearsal
+publishes a release. The real 1.2.2 → 1.2.3 update still has to be run on a
+Mac, a Windows machine, and a Linux machine before `npm run release` publishes.
 
 Clearing recent dictations rewrites `recent.json`. It does not erase copies already in
 APFS snapshots or Time Machine.
@@ -280,12 +317,12 @@ Home has two dropdowns, stored in `prefs.json` with the same pattern as the othe
 |---|---|
 | macOS | Apple Metal, when the whisper.cpp binary was built with Metal (the default `npm run setup:whisper` on a Mac) |
 | Windows / Linux with an NVIDIA driver | NVIDIA CUDA, when `whisper-server-cuda` is staged |
-| Windows / Linux otherwise | Vulkan, when a Vulkan whisper.cpp binary is staged and a Vulkan loader (or an NVIDIA driver, for a Vulkan-instead-of-CUDA build) is present |
+| Windows / Linux otherwise | Vulkan, when `resources/bin/<os>-<arch>/whisper-server-vulkan/` is installed and `vulkaninfo` reports a GPU that is not a CPU device (lavapipe). A Vulkan loader with no usable GPU, or a Vulkan process that exits or logs `No devices found`, falls back to the CPU engine. |
 | Anything else | CPU |
 
 Picking Metal, CUDA, or Vulkan directly uses that backend. When it isn't staged, or the process fails to start on it, Flowa retries on the CPU and shows a quiet yellow note on Home (the same warning banner as the other in-app status text). There is no dialog and no system notification. Choosing CPU skips the GPU attempt and shows no note.
 
-Whisper uses whisper.cpp v1.9.5. `-ng` forces CPU. CUDA and Vulkan are extra binaries (`whisper-server-cuda`, `whisper-server-vulkan`) so one `resources/bin` folder can hold more than one backend. `whisper-backends.json` records what the build script compiled. The speech-model dropdown only changes the `-m` file passed to that same binary.
+Whisper uses whisper.cpp v1.9.5. `-ng` forces CPU. CUDA and Vulkan are extra binaries so one `resources/bin` folder can hold more than one backend. Vulkan is the directory `whisper-server-vulkan/` (its own `whisper-server`, `whisper-cli`, and ggml libraries) because those file names are the same as the CPU engine's. A flat `whisper-server-vulkan` binary from `FLOWA_WHISPER_VARIANT=vulkan` on an older build is still accepted. `whisper-backends.json` records what was staged. The speech-model dropdown only changes the `-m` file passed to that binary.
 
 ### Whisper Small
 
@@ -395,6 +432,8 @@ MIT (same as Swift-Flowa). whisper.cpp is MIT. The Whisper weights are MIT (Open
 3. **Model in installers vs. first-run download.** The Whisper weights stay inside the installers.
 4. **GitHub target.** Should this replace `maxkongerskov/Flowa`, or go into `Flowa-Windows` or a new repo?
 5. **Signing.** Signing/notarization needs an Apple Developer ID (team 6LZ2DS9JPD) and a Windows code-signing certificate.
-6. **Version number.** App version is 1.2.2 (`package.json`). `npm run release -- 1.2.2` publishes
-   that version after tests and a packaged update rehearsal. `npm run release -- patch` publishes
-   the next patch. The download table above stays on the last installers that were actually published.
+6. **Version number.** App version is 1.2.3 (`package.json`). `npm run release -- 1.2.3` publishes
+   that version after tests and a packaged update rehearsal on the release Mac. It does not
+   publish until that command is run, and this branch does not tag or upload a GitHub Release.
+   `npm run release -- patch` would publish the next patch instead. The download table above
+   stays on the last installers that were actually published.

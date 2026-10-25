@@ -50,6 +50,12 @@ fi
 for d in darwin-arm64/whisper-server darwin-x64/whisper-server win32-x64/whisper-server.exe linux-x64/whisper-server; do
   [ -f "resources/bin/$d" ] || { echo "Missing engine resources/bin/$d" >&2; exit 1; }
 done
+# Vulkan is a second engine next to the official CPU zip, in its own folder so
+# libggml / whisper.dll from the Vulkan build do not replace the CPU ones.
+# Download the CI artifacts from the Vulkan engine workflow into these folders.
+for d in win32-x64/whisper-server-vulkan/whisper-server.exe linux-x64/whisper-server-vulkan/whisper-server; do
+  [ -f "resources/bin/$d" ] || { echo "Missing Vulkan engine resources/bin/$d" >&2; exit 1; }
+done
 if [ ! -x resources/mac/flowa-helper ] || [ native/macos/flowa-helper.swift -nt resources/mac/flowa-helper ]; then
   bash scripts/build-mac-helper.sh
 fi
@@ -117,8 +123,11 @@ file "$OUT"/mac-arm64/Flowa.app/Contents/Resources/bin/whisper-server | grep -q 
 file "$OUT"/mac/Flowa.app/Contents/Resources/bin/whisper-server | grep -q "x86_64"
 file "$OUT"/win-unpacked/resources/bin/whisper-server.exe | grep -q "PE32+"
 [ -f "$OUT"/win-unpacked/resources/bin/whisper.dll ]
+[ -f "$OUT"/win-unpacked/resources/bin/whisper-server-vulkan/whisper-server.exe ]
 file "$OUT"/linux-unpacked/resources/bin/whisper-server | grep -q "ELF 64-bit"
 [ -f "$OUT"/linux-unpacked/resources/bin/libwhisper.so.1 ]
+[ -f "$OUT"/linux-unpacked/resources/bin/whisper-server-vulkan/whisper-server ]
+find "$OUT"/linux-unpacked/resources/bin/whisper-server-vulkan -name '*ggml-vulkan*' | grep -q .
 [ -f "$OUT/Flowa-$VERSION-arm64-mac.zip" ]
 [ -f "$OUT/Flowa-$VERSION-x64-mac.zip" ]
 [ -f "$OUT/Flowa-$VERSION-arm64.dmg" ]

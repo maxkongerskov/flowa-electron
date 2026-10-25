@@ -42,7 +42,8 @@ MODEL="models/ggml-large-v3-turbo.bin"
 MODEL_SHA1="4af2b29d7ec73d781377bfd1758ca957a807e941"
 [ -f "$MODEL" ] || { echo "Missing $MODEL" >&2; exit 1; }
 [ "$(shasum -a 1 "$MODEL" | cut -d' ' -f1)" = "$MODEL_SHA1" ] || { echo "$MODEL: SHA-1 mismatch" >&2; exit 1; }
-for d in darwin-arm64/whisper-server darwin-x64/whisper-server win32-x64/whisper-server.exe linux-x64/whisper-server; do
+for d in darwin-arm64/whisper-server darwin-x64/whisper-server win32-x64/whisper-server.exe linux-x64/whisper-server \
+  win32-x64/whisper-server-vulkan/whisper-server.exe linux-x64/whisper-server-vulkan/whisper-server; do
   [ -f "resources/bin/$d" ] || { echo "Missing engine resources/bin/$d" >&2; exit 1; }
 done
 UPDATE_KEY="${FLOWA_UPDATE_KEY:-$HOME/.config/flowa/update-private.pem}"

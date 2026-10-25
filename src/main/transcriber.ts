@@ -24,7 +24,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { createServer } from 'node:net'
 import type { TranscriberStatus } from '@shared/types'
-import { cleanTranscript, cliArgs, ggmlModel, ggmlWeightsFor, inferenceFields, serverArgs, swiftModelVariant, type GgmlWeights } from '@shared/model'
+import { cleanTranscript, cliArgs, ggmlModel, ggmlWeightsFor, inferenceFields, modelOverridePath, serverArgs, swiftModelVariant, type GgmlWeights } from '@shared/model'
 import { PrefKey } from '@shared/prefs'
 import {
   gpuFallbackNote, selectBackend, speechModelById, whisperGpuBackends, whisperLogsShowGpuFailure, whisperSmallId,
@@ -36,7 +36,7 @@ import { probeGpu } from './gpuProbe'
 import { paths } from './paths'
 import { prefs } from './store'
 import { run } from './proc'
-import { readWhisperManifest, resolveWhisperBin } from './speechFiles'
+import { readWhisperManifest, resolveWhisperBin, whisperLibraryEnv } from './speechFiles'
 
 const exe = (name: string): string => (process.platform === 'win32' ? `${name}.exe` : name)
 const noun = machineNoun(process.platform)
@@ -45,17 +45,20 @@ const noun = machineNoun(process.platform)
 export function looksComplete(file: string, weights: GgmlWeights = ggmlModel): boolean {
   try {
     const st = fs.statSync(file)
-    return st.isFile() && st.size >= weights.approxBytes * 0.98
+    // Smoke tests point FLOWA_WHISPER_MODEL at a small ggml file. Release
+    // builds never set FLOWA_PACKAGED_SMOKE, so Turbo still has to be full size.
+    const smoke = process.env.FLOWA_PACKAGED_SMOKE === '1' && process.env.FLOWA_WHISPER_MODEL?.trim() === file
+    const floor = smoke ? 1_000_000 : weights.approxBytes * 0.98
+    return st.isFile() && st.size >= floor
   } catch {
     return false
   }
 }
 
 export function modelCandidates(weights: GgmlWeights = ggmlModel): string[] {
-  const override = process.env.FLOWA_WHISPER_MODEL?.trim() || ''
   // The override is a path to one file. It applies only when that file is the
   // model currently selected, so a Turbo path cannot satisfy Whisper Small.
-  const overrideOk = override && path.basename(override) === weights.fileName ? override : ''
+  const overrideOk = modelOverridePath(process.env, weights.fileName)
   return [
     overrideOk,
     // Bundled with the app (like the Swift bundle's Models/ folder).
@@ -109,6 +112,13 @@ function sha1File(file: string): Promise<string> {
 }
 
 const threads = (): number => Math.max(1, Math.min(8, (os.availableParallelism?.() ?? os.cpus().length) - 1))
+// A GPU that never opens the port, or a prewarm that never returns, must not
+// sit on the Preparing screen. CPU model load of Turbo can be slower than this
+// on a cold disk, so only the GPU attempt is on the short budget.
+const GPU_START_MS = 3 * 60 * 1000
+const CPU_START_MS = 10 * 60 * 1000
+const GPU_PREWARM_MS = 2 * 60 * 1000
+const CPU_PREWARM_MS = 3 * 60 * 1000
 
 export class Transcriber extends EventEmitter {
   status: TranscriberStatus = { kind: 'idle' }
@@ -151,7 +161,12 @@ export class Transcriber extends EventEmitter {
     const label = speechModelById(this.activeModelId).label
     const backend = this.runtime ? ` · ${this.runtime.backend}` : ''
     const weights = this.weights()
-    const bin = resolveBinary('whisper-server') ?? resolveBinary('whisper-cli')
+    const kind = this.runtime?.whisperBinary ?? 'default'
+    const bin =
+      resolveWhisperBin(paths.binDir, kind, 'server') ??
+      resolveWhisperBin(paths.binDir, kind, 'cli') ??
+      resolveBinary('whisper-server') ??
+      resolveBinary('whisper-cli')
     const model = this.modelPath ?? resolveModel(weights)
     return {
       modelFile: model,
@@ -256,6 +271,7 @@ export class Transcriber extends EventEmitter {
     this.runtime = plan
     this.whisperUseGpu = plan.whisperUseGpu
     if (plan.fellBack && plan.note) this.notice = { kind: 'gpu-fallback', message: plan.note }
+    console.log(`[Flowa] speech plan: backend=${plan.backend} binary=${plan.whisperBinary} gpu=${plan.whisperUseGpu}${plan.fellBack ? ' (CPU fallback)' : ''}${plan.note ? ` note=${plan.note}` : ''}`)
     const serverBin = resolveWhisperBin(paths.binDir, plan.whisperBinary, 'server') ?? resolveBinary('whisper-server')
       const cliBin = resolveWhisperBin(paths.binDir, plan.whisperBinary, 'cli') ?? resolveBinary('whisper-cli')
       if (!serverBin && !cliBin) {
@@ -285,24 +301,28 @@ export class Transcriber extends EventEmitter {
 
       this.startPrepareProgress()
       if (serverBin) {
+        const cpuBin = resolveWhisperBin(paths.binDir, 'default', 'server') ?? resolveBinary('whisper-server') ?? serverBin
         try {
-          await this.startServer(serverBin, model, plan.whisperUseGpu)
+          console.log(`[Flowa] launching ${plan.backend} ${serverBin}`)
+          await this.startServer(serverBin, model, plan.whisperUseGpu, plan.whisperUseGpu ? GPU_START_MS : CPU_START_MS)
+          if (plan.whisperUseGpu && this.runtime && this.runtime.backend !== 'cpu' && whisperLogsShowGpuFailure(this.serverLog.join('\n'), this.runtime.backend)) {
+            throw new Error(`GPU backend did not initialize: ${this.serverLog.slice(-3).join(' ')}`)
+          }
+          // Prewarm (Swift: WhisperKitConfig(prewarm: true)): one tiny inference
+          // so the first real dictation doesn't pay for GPU/Metal warm-up.
+          await this.inferServer(encodeWav16(new Float32Array(16_000)), 'en', plan.whisperUseGpu ? GPU_PREWARM_MS : CPU_PREWARM_MS)
         } catch (e) {
           if (!plan.whisperUseGpu) throw e
-          console.warn('[Flowa] GPU engine failed, retrying on CPU', e)
+          console.warn('[Flowa] GPU engine failed, retrying on CPU', e instanceof Error ? e.message : e)
+          console.warn(`[Flowa] GPU logs: ${this.serverLog.slice(-8).join(' | ') || '(none)'}`)
           this.noteGpuFallback(plan.backend === 'cpu' ? 'gpu' : plan.backend)
           this.killServer()
           this.whisperUseGpu = false
-          const cpuBin = resolveWhisperBin(paths.binDir, 'default', 'server') ?? serverBin
-          await this.startServer(cpuBin, model, false)
+          console.log(`[Flowa] launching cpu ${cpuBin}`)
+          await this.startServer(cpuBin, model, false, CPU_START_MS)
+          await this.inferServer(encodeWav16(new Float32Array(16_000)), 'en', CPU_PREWARM_MS)
         }
         this.mode = 'server'
-        if (plan.whisperUseGpu && this.runtime && this.runtime.backend !== 'cpu' && whisperLogsShowGpuFailure(this.serverLog.join('\n'), this.runtime.backend)) {
-          this.noteGpuFallback(this.runtime.backend)
-        }
-        // Prewarm (Swift: WhisperKitConfig(prewarm: true)): one tiny inference
-        // so the first real dictation doesn't pay for GPU/Metal warm-up.
-        await this.inferServer(encodeWav16(new Float32Array(16_000)), 'en')
       } else if (cliBin) {
         this.mode = 'cli'
       } else {
@@ -315,11 +335,12 @@ export class Transcriber extends EventEmitter {
       this.stopPrepareProgress()
       this.isLoaded = true
       this.setStatus({ kind: 'ready' })
-    console.log(`[Flowa] Whisper ready in ${Math.round((Date.now() - started) / 1000)}s (${this.mode}, gpu=${this.whisperUseGpu}) from ${model}`)
+    console.log(`[Flowa] Whisper ready in ${Math.round((Date.now() - started) / 1000)}s (${this.mode}, backend=${this.runtime?.backend ?? 'cpu'}, gpu=${this.whisperUseGpu}) from ${model}`)
   }
 
   private noteGpuFallback(requested: 'gpu' | 'metal' | 'cuda' | 'vulkan'): void {
     const message = gpuFallbackNote(speechModelById(this.activeModelId).label, requested)
+    console.warn(`[Flowa] ${message}`)
     this.notice = { kind: 'gpu-fallback', message }
     if (this.runtime) {
       this.runtime = { ...this.runtime, backend: 'cpu', whisperUseGpu: false, fellBack: true, note: message }
@@ -375,14 +396,16 @@ export class Transcriber extends EventEmitter {
     return dest
   }
 
-  private async startServer(bin: string, model: string, useGpu: boolean): Promise<void> {
+  private async startServer(bin: string, model: string, useGpu: boolean, budgetMs: number): Promise<void> {
     this.port = await freePort()
     this.serverLog = []
     const child = spawn(bin, serverArgs(model, this.port, threads(), useGpu), {
       windowsHide: true,
-      cwd: path.dirname(bin)
+      cwd: path.dirname(bin),
+      env: whisperLibraryEnv(bin)
     })
     this.server = child
+    let spawnError: Error | null = null
     const log = (c: Buffer): void => {
       for (const line of c.toString('utf8').split(/\r?\n/)) {
         if (line.trim()) this.serverLog.push(line.trim())
@@ -391,6 +414,10 @@ export class Transcriber extends EventEmitter {
     }
     child.stdout?.on('data', log)
     child.stderr?.on('data', log)
+    child.on('error', (err) => {
+      spawnError = err
+      this.serverLog.push(err.message)
+    })
     child.on('exit', (code) => {
       if (this.server === child) {
         this.server = null
@@ -401,8 +428,9 @@ export class Transcriber extends EventEmitter {
         }
       }
     })
-    const deadline = Date.now() + 10 * 60 * 1000
+    const deadline = Date.now() + budgetMs
     while (Date.now() < deadline) {
+      if (spawnError) throw spawnError
       if (child.exitCode !== null) {
         throw new Error(`speech engine exited (${child.exitCode}): ${this.serverLog.slice(-3).join(' ')}`)
       }
@@ -417,11 +445,11 @@ export class Transcriber extends EventEmitter {
     throw new Error('speech engine did not start in time')
   }
 
-  private async inferServer(wav: Uint8Array, language: string | null): Promise<string> {
+  private async inferServer(wav: Uint8Array, language: string | null, timeoutMs = 10 * 60 * 1000): Promise<string> {
     const form = new FormData()
     form.append('file', new Blob([new Uint8Array(wav)], { type: 'audio/wav' }), 'audio.wav')
     for (const [k, v] of Object.entries(inferenceFields(language))) form.append(k, v)
-    const r = await fetch(`http://127.0.0.1:${this.port}/inference`, { method: 'POST', body: form })
+    const r = await fetch(`http://127.0.0.1:${this.port}/inference`, { method: 'POST', body: form, signal: AbortSignal.timeout(timeoutMs) })
     const body = await r.text()
     if (!r.ok) throw new Error(`HTTP ${r.status}: ${body.slice(0, 200)}`)
     let text = ''
@@ -441,7 +469,11 @@ export class Transcriber extends EventEmitter {
     const bin = resolveWhisperBin(paths.binDir, this.whisperUseGpu ? kind : 'default', 'cli') ?? resolveBinary('whisper-cli')
     if (!bin || !this.modelPath) throw new Error('Speech engine isn\'t ready yet.')
     const outBase = path.join(os.tmpdir(), `flowa-whisper-${process.pid}-${Date.now()}`)
-    const r = await run(bin, cliArgs(this.modelPath, wavFile, outBase, language, threads(), this.whisperUseGpu), 10 * 60 * 1000)
+    const r = await run(bin, cliArgs(this.modelPath, wavFile, outBase, language, threads(), this.whisperUseGpu), {
+      timeoutMs: 10 * 60 * 1000,
+      cwd: path.dirname(bin),
+      env: whisperLibraryEnv(bin)
+    })
     const txt = `${outBase}.txt`
     let text = ''
     try {

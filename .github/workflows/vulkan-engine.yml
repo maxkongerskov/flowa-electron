@@ -1,0 +1,227 @@
+# Builds whisper.cpp v1.9.5 (d1be6fde11ac6e0407606b4e42fe72d34add8037) with
+# -DGGML_VULKAN=ON for Windows x64 and Linux x64. Artifacts are the
+# whisper-server-vulkan/ trees npm run release copies into resources/bin.
+# This workflow does not tag, does not publish a GitHub Release, and does not
+# push to main. Linux stays on ubuntu-22.04 so glibc stops at 2.34.
+name: Vulkan whisper engine
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux x64 Vulkan
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Vulkan build dependencies
+        run: sudo bash scripts/ci-install-linux-vulkan.sh
+      - name: Unit tests and typecheck
+        run: |
+          npm ci
+          npm test
+          npm run typecheck
+      - name: Build Vulkan engine
+        run: |
+          # /usr/local/bin/glslc is the SDK compiler with its own library path.
+          # That stays ahead of /opt/vulkan-sdk/bin so shader builds do not
+          # pick the unwrapped glslc. Headers still come from VULKAN_SDK.
+          export PATH="/opt/cmake/bin:/usr/local/bin:/opt/vulkan-sdk/bin:$PATH"
+          export VULKAN_SDK=/opt/vulkan-sdk
+          export LD_LIBRARY_PATH="/opt/vulkan-sdk/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          export CC=gcc-12 CXX=g++-12
+          export FLOWA_WHISPER_VARIANT=vulkan
+          export FLOWA_GLIBC_MAX=2.34
+          export FLOWA_GLIBCXX_MAX=3.4.30
+          node scripts/build-whisper.mjs
+      - name: Stage official CPU engine
+        run: |
+          sudo apt-get install -y --no-install-recommends unzip
+          node scripts/stage-cpu-engine.mjs --linux
+      - name: Speech model for the smoke test
+        run: |
+          curl -fsSL -o /tmp/ggml-tiny.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin
+          test -s /tmp/ggml-tiny.en.bin
+      - name: CPU-only installer size
+        run: |
+          mkdir -p resources/mac
+          mv resources/bin/linux-x64/whisper-server-vulkan /tmp/whisper-server-vulkan
+          npx electron-vite build
+          npx electron-builder --linux AppImage deb --x64 --publish never --config.directories.output=release-cpu
+          mv /tmp/whisper-server-vulkan resources/bin/linux-x64/whisper-server-vulkan
+          python3 - <<'PY'
+          import glob, os
+          for pattern in ("release-cpu/*.AppImage", "release-cpu/*.deb"):
+              for name in glob.glob(pattern):
+                  print(f"cpu-only {os.path.basename(name)} {os.path.getsize(name)}")
+          PY
+      - name: Package AppImage and deb with Vulkan
+        run: |
+          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers vulkan-tools xvfb libgomp1
+          npx electron-builder --linux AppImage deb --x64 --publish never --config.directories.output=release
+          python3 - <<'PY'
+          import glob, os
+          vulkan = 0
+          for root, dirs, files in os.walk("resources/bin/linux-x64/whisper-server-vulkan"):
+              for name in files:
+                  vulkan += os.path.getsize(os.path.join(root, name))
+          print(f"vulkan-tree-bytes {vulkan}")
+          for pattern in ("release/*.AppImage", "release/*.deb", "release-cpu/*.AppImage", "release-cpu/*.deb"):
+              for name in glob.glob(pattern):
+                  print(f"installer {name} {os.path.getsize(name)}")
+          PY
+          test -x release/linux-unpacked/resources/bin/whisper-server
+          test -x release/linux-unpacked/resources/bin/whisper-server-vulkan/whisper-server
+          test -f release/linux-unpacked/resources/bin/libwhisper.so.1
+      - name: Lavapipe transcription and missing-loader fallback
+        run: |
+          node scripts/smoke-vulkan.mjs \
+            --bin release/linux-unpacked/resources/bin \
+            --model /tmp/ggml-tiny.en.bin \
+            --wav tests/fixtures/quick_brown_fox.wav \
+            --require-vulkan
+      - name: Packaged app picks Vulkan, then CPU
+        run: |
+          app="$(find release/linux-unpacked -maxdepth 1 -type f -executable | head -1)"
+          icd="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' | head -1)"
+          test -n "$app"
+          test -n "$icd"
+          Xvfb :98 -screen 0 1280x800x24 >/tmp/xvfb.log 2>&1 &
+          sleep 0.4
+          DISPLAY=:98 \
+          FLOWA_PACKAGED_SMOKE=1 \
+          FLOWA_GPU_VULKAN=1 \
+          GGML_VK_VISIBLE_DEVICES=0 \
+          VK_DRIVER_FILES="$icd" \
+          VK_ICD_FILENAMES="$icd" \
+          FLOWA_WHISPER_MODEL=/tmp/ggml-tiny.en.bin \
+          FLOWA_SELFTEST="transcribe:${PWD}/tests/fixtures/quick_brown_fox.wav" \
+          FLOWA_SELFTEST_LANG=en \
+          FLOWA_SELFTEST_QUIT=1 \
+            "$app" --no-sandbox > /tmp/app-vulkan.log 2>&1 || true
+          echo '--- packaged vulkan ---'
+          cat /tmp/app-vulkan.log
+          grep -E 'backend=vulkan|speech plan: backend=vulkan' /tmp/app-vulkan.log
+          DISPLAY=:98 \
+          FLOWA_PACKAGED_SMOKE=1 \
+          FLOWA_GPU_VULKAN=0 \
+          FLOWA_WHISPER_MODEL=/tmp/ggml-tiny.en.bin \
+          FLOWA_SELFTEST="transcribe:${PWD}/tests/fixtures/quick_brown_fox.wav" \
+          FLOWA_SELFTEST_LANG=en \
+          FLOWA_SELFTEST_QUIT=1 \
+            "$app" --no-sandbox > /tmp/app-cpu.log 2>&1 || true
+          echo '--- packaged cpu fallback ---'
+          cat /tmp/app-cpu.log
+          grep -E 'backend=cpu|speech plan: backend=cpu' /tmp/app-cpu.log
+      - name: Upload Vulkan engine
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-vulkan-linux-x64
+          path: resources/bin/linux-x64/whisper-server-vulkan
+          retention-days: 90
+          if-no-files-found: error
+
+  windows:
+    name: Windows x64 Vulkan
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Unit tests and typecheck
+        run: |
+          npm ci
+          npm test
+          npm run typecheck
+      - name: Install Vulkan SDK 1.3.296.0
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/1.3.296.0/windows/VulkanSDK-1.3.296.0-Installer.exe" -OutFile vulkan-sdk.exe
+          Start-Process -FilePath .\vulkan-sdk.exe -ArgumentList "--accept-licenses --default-answer --confirm-command install" -Wait
+          $sdk = "C:\VulkanSDK\1.3.296.0"
+          if (-not (Test-Path "$sdk\Bin\glslc.exe")) { Write-Error "glslc missing under $sdk"; exit 1 }
+          "VULKAN_SDK=$sdk" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "$sdk\Bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+      - name: Build Vulkan engine
+        shell: pwsh
+        run: |
+          $env:FLOWA_WHISPER_VARIANT = "vulkan"
+          node scripts/build-whisper.mjs
+      - name: Bundle the VC++ runtime next to the Vulkan engine
+        shell: pwsh
+        run: |
+          $dest = "resources\bin\win32-x64\whisper-server-vulkan"
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsRoot = & $vswhere -latest -property installationPath
+          $crt = Get-ChildItem "$vsRoot\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT" -Directory | Sort-Object FullName -Descending | Select-Object -First 1
+          $omp = Get-ChildItem "$vsRoot\VC\Redist\MSVC\*\x64\Microsoft.VC*.OpenMP" -Directory | Sort-Object FullName -Descending | Select-Object -First 1
+          foreach ($name in @("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")) {
+            Copy-Item (Join-Path $crt.FullName $name) $dest
+          }
+          Copy-Item (Join-Path $omp.FullName "vcomp140.dll") $dest
+          Get-ChildItem $dest | ForEach-Object { Write-Host "$($_.Name) $($_.Length)" }
+      - name: Stage official CPU engine
+        run: node scripts/stage-cpu-engine.mjs --windows
+      - name: Speech model for the smoke test
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin" -OutFile "$env:TEMP\ggml-tiny.en.bin"
+      - name: CPU transcription and Vulkan-without-a-GPU
+        shell: pwsh
+        run: |
+          node scripts/smoke-vulkan.mjs --bin resources/bin/win32-x64 --model "$env:TEMP\ggml-tiny.en.bin" --wav tests/fixtures/quick_brown_fox.wav
+      - name: Package NSIS and record the size increase
+        shell: pwsh
+        run: |
+          Move-Item resources\bin\win32-x64\whisper-server-vulkan $env:TEMP\whisper-server-vulkan
+          npx electron-vite build
+          npx electron-builder --win nsis --x64 --publish never --config.directories.output=release-cpu
+          Move-Item $env:TEMP\whisper-server-vulkan resources\bin\win32-x64\whisper-server-vulkan
+          npx electron-builder --win nsis --x64 --publish never --config.directories.output=release
+          Get-ChildItem release, release-cpu -File | ForEach-Object { Write-Host "installer $($_.FullName) $($_.Length)" }
+          $vulkan = (Get-ChildItem resources\bin\win32-x64\whisper-server-vulkan -Recurse -File | Measure-Object Length -Sum).Sum
+          Write-Host "vulkan-tree-bytes $vulkan"
+          if (-not (Test-Path release\win-unpacked\resources\bin\whisper-server.exe)) { exit 1 }
+          if (-not (Test-Path release\win-unpacked\resources\bin\whisper.dll)) { exit 1 }
+          if (-not (Test-Path release\win-unpacked\resources\bin\whisper-server-vulkan\whisper-server.exe)) { exit 1 }
+      - name: Upload Vulkan engine
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-vulkan-win32-x64
+          path: resources/bin/win32-x64/whisper-server-vulkan
+          retention-days: 90
+          if-no-files-found: error
+
+  mac:
+    name: macOS tests and package
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Unit tests and typecheck
+        run: |
+          npm ci
+          npm test
+          npm run typecheck
+      - name: Unsigned app package
+        run: |
+          bash scripts/build-mac-icons.sh
+          npx electron-vite build
+          npx electron-builder --mac dir --arm64 --publish never -c.mac.identity=null
+          test -d release/mac-arm64/*.app || test -d release/mac-arm64/Flowa.app

@@ -45,6 +45,23 @@ export function ggmlWeightsFor(id: string): GgmlWeights {
   return id === 'whisper-small' ? ggmlSmall : ggmlModel
 }
 
+function pathBasename(file: string): string {
+  const cut = Math.max(file.lastIndexOf('/'), file.lastIndexOf('\\'))
+  return cut >= 0 ? file.slice(cut + 1) : file
+}
+
+/**
+ * FLOWA_WHISPER_MODEL replaces the weights file when its name matches the
+ * selected model. Packaged smoke tests set FLOWA_PACKAGED_SMOKE=1 so a small
+ * fixture model can stand in for Turbo without changing the release installers.
+ */
+export function modelOverridePath(env: NodeJS.ProcessEnv, weightsFileName: string): string {
+  const override = env.FLOWA_WHISPER_MODEL?.trim() || ''
+  if (!override) return ''
+  if (env.FLOWA_PACKAGED_SMOKE === '1') return override
+  return pathBasename(override) === weightsFileName ? override : ''
+}
+
 /** Pinned whisper.cpp release that the setup script builds. */
 export const whisperCppTag = 'v1.9.5'
 

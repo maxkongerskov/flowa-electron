@@ -1,12 +1,12 @@
 import fs from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { cliArgs, ggmlModel, ggmlSmall, ggmlWeightsFor, serverArgs } from '@shared/model'
+import { cliArgs, ggmlModel, ggmlSmall, ggmlWeightsFor, modelOverridePath, serverArgs } from '@shared/model'
 import { coercePrefs, PrefKey } from '@shared/prefs'
 import {
   assumedWhisperManifest, collectEngineNotices, gpuFallbackNote, hardwareChoices, isHardwarePref, isSpeechModelId,
   type WhisperManifest,
-  normalizeWhisperManifest, selectBackend, speechModelChoices, speechModelHint, whisperGpuBackends, whisperLogsShowGpuFailure,
-  whisperSmallId, whisperTurboId
+  normalizeWhisperManifest, selectBackend, speechModelChoices, speechModelHint, vulkanSummaryHasGpu, whisperGpuBackends,
+  whisperLogsShowGpuFailure, whisperNestedExecutable, whisperSmallId, whisperTurboId, whisperVariantDir
 } from '@shared/speech'
 
 const macMetal = assumedWhisperManifest('darwin')
@@ -137,7 +137,22 @@ describe('fallback copy', () => {
   it('reads GPU failure out of whisper.cpp logs', () => {
     expect(whisperLogsShowGpuFailure('whisper_init: use gpu    = 0', 'metal')).toBe(true)
     expect(whisperLogsShowGpuFailure('ggml_vulkan: no devices found', 'vulkan')).toBe(true)
+    expect(whisperLogsShowGpuFailure('ggml_vulkan: No devices found.', 'vulkan')).toBe(true)
     expect(whisperLogsShowGpuFailure('ggml_metal_init: using Metal', 'metal')).toBe(false)
     expect(normalizeWhisperManifest({ default: ['metal'], binaries: { cuda: true } }, 'linux').default).toEqual(['cpu', 'metal'])
+  })
+  it('treats a Vulkan CPU device as not a GPU and keeps discrete and integrated GPUs', () => {
+    expect(vulkanSummaryHasGpu('deviceType = PHYSICAL_DEVICE_TYPE_CPU\ndeviceName = llvmpipe')).toBe(false)
+    expect(vulkanSummaryHasGpu('deviceType = PHYSICAL_DEVICE_TYPE_DISCRETE_GPU')).toBe(true)
+    expect(vulkanSummaryHasGpu('deviceType = PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU')).toBe(true)
+    expect(vulkanSummaryHasGpu('no devices')).toBeNull()
+    expect(whisperVariantDir('vulkan')).toBe('whisper-server-vulkan')
+    expect(whisperNestedExecutable('server', false)).toBe('whisper-server')
+    expect(whisperNestedExecutable('cli', true)).toBe('whisper-cli.exe')
+  })
+  it('lets a packaged smoke test point at a small model and keeps release overrides strict', () => {
+    expect(modelOverridePath({ FLOWA_WHISPER_MODEL: '/tmp/ggml-tiny.en.bin' }, 'ggml-large-v3-turbo.bin')).toBe('')
+    expect(modelOverridePath({ FLOWA_WHISPER_MODEL: '/tmp/ggml-large-v3-turbo.bin' }, 'ggml-large-v3-turbo.bin')).toBe('/tmp/ggml-large-v3-turbo.bin')
+    expect(modelOverridePath({ FLOWA_PACKAGED_SMOKE: '1', FLOWA_WHISPER_MODEL: '/tmp/ggml-tiny.en.bin' }, 'ggml-large-v3-turbo.bin')).toBe('/tmp/ggml-tiny.en.bin')
   })
 })

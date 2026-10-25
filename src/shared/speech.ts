@@ -58,7 +58,7 @@ export function speechModelHint(id: SpeechModelId): string {
 
 export function hardwareHint(platform: string): string {
   if (platform === 'darwin') return 'Automatic uses Apple Metal on this Mac.'
-  return 'Automatic uses NVIDIA CUDA when an NVIDIA driver is present, and Vulkan for other graphics chips.'
+  return 'Automatic uses NVIDIA CUDA when an NVIDIA driver is present, and Vulkan when a Vulkan GPU is available.'
 }
 
 export function backendLabel(backend: RuntimeBackend): string {
@@ -208,6 +208,12 @@ export function selectBackend(
   return planFor('cpu', builds, modelLabel, true, pref)
 }
 
+/** Folder that holds one Vulkan or CUDA engine, isolated from the CPU shared libraries. */
+export function whisperVariantDir(kind: WhisperBinaryKind): string | null {
+  if (kind === 'vulkan' || kind === 'cuda') return `whisper-server-${kind}`
+  return null
+}
+
 export function whisperServerFile(kind: WhisperBinaryKind, windows: boolean): string {
   const stem = kind === 'default' ? 'whisper-server' : `whisper-server-${kind}`
   return windows ? `${stem}.exe` : stem
@@ -216,6 +222,23 @@ export function whisperServerFile(kind: WhisperBinaryKind, windows: boolean): st
 export function whisperCliFile(kind: WhisperBinaryKind, windows: boolean): string {
   const stem = kind === 'default' ? 'whisper-cli' : `whisper-cli-${kind}`
   return windows ? `${stem}.exe` : stem
+}
+
+/** Name inside whisper-server-vulkan/: the executable keeps upstream's name. */
+export function whisperNestedExecutable(role: 'server' | 'cli', windows: boolean): string {
+  const stem = role === 'server' ? 'whisper-server' : 'whisper-cli'
+  return windows ? `${stem}.exe` : stem
+}
+
+/**
+ * vulkaninfo --summary device types. `null` when the summary names no device
+ * (unknown, not "CPU only"). A CPU device is lavapipe or another software
+ * implementation; ggml ignores those unless GGML_VK_VISIBLE_DEVICES is set.
+ */
+export function vulkanSummaryHasGpu(summary: string): boolean | null {
+  const types = [...summary.matchAll(/PHYSICAL_DEVICE_TYPE_([A-Z0-9_]+)/g)].map((match) => match[1])
+  if (types.length === 0) return null
+  return types.some((type) => type !== 'CPU')
 }
 
 /** True when a whisper.cpp log shows the requested GPU backend did not come up. */

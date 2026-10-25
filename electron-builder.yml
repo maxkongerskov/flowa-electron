@@ -74,4 +74,6 @@ linux:
   synopsis: Local voice dictation
   maintainer: Max Køngerskov
 deb:
-  recommends: [xdotool]
+  # libvulkan1 is the loader. The Vulkan engine needs it; the CPU engine does not.
+  # A recommendation keeps the package installable on a machine with no Vulkan driver.
+  recommends: [xdotool, libvulkan1]

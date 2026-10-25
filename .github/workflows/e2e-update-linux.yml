@@ -1,0 +1,31 @@
+# Same rehearsal as .github/workflows/e2e-update-windows.yml, on Linux.
+# Builds two slim AppImages (no Whisper weights) and, when apt can install
+# the package, two debs. 9.9.0 must quit and 9.9.1 must start. A tampered
+# file must be rejected. No secrets, no tag, no GitHub Release.
+name: Linux update rehearsal
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Display and AppImage libraries
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb libfuse2
+      - run: npm ci
+      - run: node scripts/e2e-update.mjs
+        env:
+          # AppImage's fuse mount is not available in this runner. Extracting
+          # and running is the same binary the package contains.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
