@@ -13,5 +13,5 @@
     "composite": true
   },
   "include": ["electron.vite.config.ts", "vitest.config.ts", "src/main/**/*", "src/preload/**/*", "src/shared/**/*", "tests/**/*"],
-  "exclude": ["tests/audio-capture.test.ts"]
+  "exclude": ["tests/audio-capture.test.ts", "tests/acknowledgements-view.test.ts"]
 }

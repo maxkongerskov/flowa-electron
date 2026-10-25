@@ -16,6 +16,9 @@ const base = yaml.load(fs.readFileSync(path.join(__dirname, 'electron-builder.ym
 // and Linux installers. Pick the engine folder per target OS instead.
 const engine = (dir) => [{ from: `resources/bin/${dir}-\${arch}`, to: 'bin' }]
 // The macOS helper (resources/mac) only goes into the mac apps.
+// Keeps top-level extraResources other than the per-OS engine and the macOS helper.
+// LICENSE and THIRD_PARTY_NOTICES.md stay in this list. electron-builder appends
+// platform extraResources to it, so every mac, Windows, and Linux installer ships them.
 const common = base.extraResources.filter((r) => !String(r.from).startsWith('resources/bin/') && r.from !== 'resources/mac')
 
 const modelFilter = ['ggml-large-v3-turbo.bin']

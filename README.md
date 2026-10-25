@@ -1,400 +1,298 @@
-# Flowa (Electron)
+# Flowa
 
-Cross-platform port of **Flowa**, the local push-to-talk dictation app: tap a key, speak, and the
-transcript is pasted into the app you were using. Speech recognition runs entirely on your machine
-with **OpenAI Whisper large-v3 turbo**, the same checkpoint the Swift app ships.
+Flowa is a small push-to-talk dictation app for macOS, Windows and Linux. Press a key, speak,
+press it again, and the text is pasted wherever your cursor is.
 
-It runs on **macOS, Windows and Linux** (Electron 44 · React 19 · TypeScript · whisper.cpp v1.9.5).
-It is a 1:1 port of the Swift/SwiftUI app: same views, copy, design tokens, preferences keys,
-pipeline logic and decoding settings.
+- **Free and open source.** MIT licensed, see [LICENSE](LICENSE). No account, no subscription,
+  no usage limits.
+- **Runs locally.** Speech recognition runs on your own computer with
+  [whisper.cpp](https://github.com/ggml-org/whisper.cpp) and OpenAI's Whisper models. Your audio
+  and your text never leave the machine. There is no cloud service and no telemetry.
+- **Built with** Electron, React and TypeScript, with whisper.cpp v1.9.5 as the speech engine.
+
+Flowa started as a Swift app for macOS and was made in Denmark. This repository is the
+cross-platform Electron version.
+
+<p align="center"><img src="docs/screenshots/stage4-home.png" alt="Flowa home screen" width="520"></p>
 
 ---
 
-## System requirements
+## Contents
 
-Flowa bundles the Whisper large-v3 turbo model (1.6 GB) and transcribes locally, so it needs a reasonably capable machine.
+- [Supported platforms](#supported-platforms)
+- [Download and install](#download-and-install)
+- [Using Flowa](#using-flowa)
+- [What goes over the network](#what-goes-over-the-network)
+- [How updates work](#how-updates-work)
+- [Build from source](#build-from-source)
+- [Project layout](#project-layout)
+- [Contributing](#contributing)
+- [License](#license)
+- [Trademark](#trademark)
+
+---
+
+## Supported platforms
+
+| OS | Architectures | Installer | Speech engine |
+|---|---|---|---|
+| macOS 12 or newer | Apple Silicon (arm64), Intel (x64) | `.dmg` (signed and notarized) | whisper.cpp with Metal on Apple Silicon |
+| Windows 10 / 11 | x64 | NSIS `.exe` (not Authenticode-signed) | whisper.cpp on the CPU |
+| Linux | x86_64 | `.AppImage` and `.deb` | whisper.cpp on the CPU (needs `libgomp1`) |
+
+Windows on Arm is not built. GPU acceleration on Windows and Linux (Vulkan, with automatic
+CPU fallback) is in progress.
+
+### System requirements
+
+Flowa ships the Whisper large-v3 turbo model (about 1.6 GB) and transcribes on your machine,
+so it needs a reasonably capable computer.
 
 | | Minimum | Recommended |
 |---|---|---|
-| **RAM** | 16 GB | 32 GB |
-| **CPU** | Modern 4-core 64-bit CPU (x64 needs AVX2, roughly 2013 or newer) | 8+ cores, or Apple Silicon (M1 or newer) |
-| **GPU** | Not required | Apple Silicon with Metal for the fastest transcription |
-| **Disk** | 4 GB free | 8 GB free |
-| **OS** | macOS 12+, Windows 10/11 (64-bit), Ubuntu 22.04+ or similar | Latest macOS on Apple Silicon |
+| RAM | 16 GB | 32 GB |
+| CPU | Modern 64-bit 4-core CPU (x64 needs AVX2, roughly 2013 or newer) | 8+ cores, or Apple Silicon |
+| GPU | Not required | Apple Silicon (Metal) |
+| Disk | 4 GB free | 8 GB free |
 
-The macOS Apple Silicon build uses the GPU via Metal. The current Windows and Linux builds run the speech engine on the CPU; CUDA acceleration is not bundled yet. Linux also needs `libgomp1`.
+---
 
-## Download
+## Download and install
 
-| Platform | Variant | Installer | Size |
-|---|---|---|---|
-| macOS | Apple Silicon (M1 and later) | [Flowa-1.2.0-arm64.dmg](https://github.com/maxkongerskov/flowa-electron/releases/download/v1.2.0/Flowa-1.2.0-arm64.dmg) | 1.6 GB |
-| macOS | Intel | [Flowa-1.2.0-x64.dmg](https://github.com/maxkongerskov/flowa-electron/releases/download/v1.2.0/Flowa-1.2.0-x64.dmg) | 1.6 GB |
-| Windows | 64-bit | [Flowa-Setup-1.2.0-x64.exe](https://github.com/maxkongerskov/flowa-electron/releases/download/v1.2.0/Flowa-Setup-1.2.0-x64.exe) | 1.5 GB |
-| Linux | AppImage, x86_64 | [Flowa-1.2.0.AppImage](https://github.com/maxkongerskov/flowa-electron/releases/download/v1.2.0/Flowa-1.2.0.AppImage) | 1.6 GB |
-| Linux | Debian/Ubuntu | [flowa_1.2.0_amd64.deb](https://github.com/maxkongerskov/flowa-electron/releases/download/v1.2.0/flowa_1.2.0_amd64.deb) | 1.6 GB |
+Installers are published on **[GitHub Releases](https://github.com/maxkongerskov/flowa-electron/releases/latest)**.
 
-All files for version 1.2.0 are on the [v1.2.0 release page](https://github.com/maxkongerskov/flowa-electron/releases/tag/v1.2.0).
-
-## Quick start (local test)
-
-Requirements: Node 20+, git, cmake, a C/C++ toolchain (macOS: Xcode Command Line Tools ·
-Windows: VS 2022 Build Tools · Linux: `build-essential`).
-
-```bash
-cd ~/Projects/Flowa-Electron
-npm install                 # also fetches the Electron binary (postinstall)
-npm run setup:mac-helper    # macOS only: builds resources/mac/flowa-helper (fn key + paste)
-npm run setup:whisper       # builds whisper.cpp v1.9.5 → resources/bin/<platform>-<arch>/
-npm run setup:model         # downloads ggml-large-v3-turbo.bin (1.6 GB, sha1-verified) → models/
-npm run setup:small         # optional: ggml-small.bin (Whisper Small, ~466 MB, sha1-verified) → models/
-# FLOWA_WHISPER_VARIANT=cuda npm run setup:whisper     # whisper-server-cuda
-# FLOWA_WHISPER_VARIANT=vulkan npm run setup:whisper   # whisper-server-vulkan
-npm test                    # unit tests for the ported logic
-npm start                   # build + run the app
-```
-
-`npm run dev` starts the app with hot reload for the renderer.
-
-If you skip `setup:model`, the app downloads Whisper Turbo into its own data folder on first run
-(the "Installing" screen, with resume and sha1 check). Whisper Small downloads the same way
-the first time you select it.
-
-### Dev self-tests (no hotkey needed)
-
-```bash
-npx electron-vite build
-E=node_modules/electron/dist/Electron.app/Contents/MacOS/Electron   # Windows/Linux: node_modules/electron/dist/electron(.exe)
-FLOWA_SELFTEST=capture FLOWA_SELFTEST_QUIT=1 $E .                   # 3 s mic capture → logs sample count/peak
-FLOWA_SELFTEST=transcribe:$PWD/tests/fixtures/quick_brown_fox.wav FLOWA_SELFTEST_LANG=en FLOWA_SELFTEST_QUIT=1 $E .
-```
-
-These are disabled in packaged builds.
-
-### Packaging
-
-`npm run dist:mac`, `npm run dist:win` and `npm run dist:linux` produce a dmg, an NSIS installer,
-and an AppImage + deb respectively. Each one bundles whatever is in `resources/bin`, `resources/mac`
-and `models/`. Those three scripts use `electron-builder.yml` and do **not** bundle the 1.6 GB
-speech model. `electron-builder` can build the Windows NSIS target and the Linux AppImage/deb
-on a Mac (`npm run dist:win` / `npm run dist:linux` from macOS); you do not need a Windows or
-Linux machine for the installer itself. The whisper engine inside it must already be the
-target OS's binary (see the release script below).
-
-### Releasing an update
-
-On a Mac, one command runs the unit tests and the packaged update test, then builds.
-It commits, tags, and pushes only after that build succeeds, then publishes the GitHub
-Release. Notarization is required. A failure in tests, the update rehearsal, signing,
-notarization, stapling, or the feed check leaves no tag on origin.
-
-```bash
-npm run release -- patch          # next patch, then build and publish
-npm run release -- minor
-npm run release -- 1.2.2          # package.json is already 1.2.2: build and publish it
-```
-
-Before that command will succeed:
-
-- a clean git tree, on a branch
-- Developer ID `0EF5E5C4F619F8322BB10EE8255603A26AB18553` in the keychain (`security find-identity`), or set `FLOWA_SIGN_ID`
-- notarytool keychain profile `AC_PASSWORD` (`xcrun notarytool history --keychain-profile AC_PASSWORD`), or set `FLOWA_NOTARY_PROFILE`
-- `gh auth status` for `maxkongerskov/flowa-electron`
-- staged engines `resources/bin/{darwin-arm64,darwin-x64,win32-x64,linux-x64}/`
-- `models/ggml-large-v3-turbo.bin` with sha1 `4af2b29d7ec73d781377bfd1758ca957a807e941`
-- an update signing key whose public half is committed (see below)
-
-`electron-builder.release.cjs` bundles the Whisper models and picks `resources/bin/<os>-<arch>/`
-per target, so the Mac build does not ship the macOS engine inside the Windows installer.
-Windows and Linux are cross-built on the Mac (NSIS x64, AppImage, and deb). No Windows host
-and no Wine step. Windows arm64 is not built. A `.deb` install updates itself when `dpkg` or
-`apt` is available; anything else on Linux opens the release page.
-
-Updates are signed with ed25519 over the SHA-256 of each file. The private key stays on the
-release Mac. The app refuses to install a file whose signature does not match the public key
-baked into that build. macOS still also requires a Developer ID signature. There is no Windows
-Authenticode certificate; the ed25519 check is what stops a replaced exe.
-
-Generate the key once, on the Mac that will publish:
-
-```bash
-bash scripts/generate-update-key.sh
-git add src/shared/updatePublicKey.ts
-git commit -m "Add the update signing public key"
-```
-
-The private key defaults to `~/.config/flowa/update-private.pem` (`FLOWA_UPDATE_KEY` overrides
-the path). Do not commit it. `npm run release` aborts if that file is missing or if its public
-half does not match `src/shared/updatePublicKey.ts`.
-
-What lands in `release/` and on the GitHub Release (draft until every upload succeeds, then Latest):
-
-| File | Who uses it |
+| Platform | File |
 |---|---|
-| `Flowa-<version>-arm64.dmg`, `Flowa-<version>-x64.dmg` | People downloading Flowa. Signed, notarized, stapled. |
-| `Flowa-<version>-arm64-mac.zip`, `Flowa-<version>-x64-mac.zip` | electron-updater only. The app never shows these. The zip is not codesigned; the app inside it is. |
-| `Flowa-Setup-<version>-x64.exe` | Windows NSIS |
-| `Flowa-<version>.AppImage`, `flowa_<version>_amd64.deb` | Linux |
-| `latest-mac.yml`, `latest.yml`, `latest-linux.yml` | Written **after** stapling, with sha512, size, and ed25519 of the final files |
-| `*.blockmap` | Differential download for the zip, exe, and AppImage |
+| macOS, Apple Silicon | `Flowa-<version>-arm64.dmg` |
+| macOS, Intel | `Flowa-<version>-x64.dmg` |
+| Windows x64 | `Flowa-Setup-<version>-x64.exe` |
+| Linux AppImage | `Flowa-<version>.AppImage` |
+| Debian / Ubuntu | `flowa_<version>_amd64.deb` |
 
-`latest-mac.yml` lists both zips and both dmgs. Each packaged app contains `app-update.yml`
-(on Mac it is written into the `.app` before signing, because electron-builder's `dir` target
-does not write it). Home → **Check for updates**, then **Download**. Progress stays in the
-banner. When the download finishes and the signature checks out, Flowa quits and restarts into
-the new version. An unsigned Mac build keeps the dmg link instead of swapping itself.
+The `*-mac.zip`, `*.blockmap` and `latest*.yml` files on a release are for the built-in updater.
+You do not need to download them.
 
-Installed 1.2.0 and 1.2.1 Mac apps do not contain `app-update.yml`, so they cannot download
-1.2.2 from inside the app. Install 1.2.2 from the dmg once. Updates after that can install
-themselves. Windows and Linux 1.2.1 can still download 1.2.2, but those builds do not check
-the ed25519 signature. The check starts with 1.2.2, for the update after it.
+**macOS:** open the dmg and drag Flowa to Applications. On first launch Flowa asks for
+Microphone, Input Monitoring (for the `fn` key) and Accessibility (to paste) permissions.
 
-To rebuild the current version without publishing (still on a Mac, after the key exists):
+**Windows:** the installer is not Authenticode-signed, so SmartScreen may warn about an
+unknown publisher. Choose *More info* and *Run anyway*. Updates are still verified with an
+ed25519 signature (see [How updates work](#how-updates-work)).
 
-```bash
-FLOWA_SIGN_ID=0EF5E5C4F619F8322BB10EE8255603A26AB18553 \
-FLOWA_NOTARY_PROFILE=AC_PASSWORD \
-FLOWA_UPDATE_KEY="$HOME/.config/flowa/update-private.pem" \
-bash scripts/build-release.sh
-```
+**Linux:** `sudo apt install ./flowa_<version>_amd64.deb`, or make the AppImage executable
+(`chmod +x Flowa-<version>.AppImage`) and run it. Pasting into other apps needs `xdotool`
+(X11), or `wtype` / `ydotool` (Wayland); without one of them Flowa copies the text to the
+clipboard only.
 
-`npm run release` does not push a tag before the build. If a build fails, fix it and run the
-same version again. The packaged rehearsal on this Mac is `bash scripts/e2e-update-mac.sh`
-(Developer ID, no notarization, slim app without the Whisper weights). It tests
-the arm64 zip and the x64 zip. Each one must quit within 20 seconds of
-`installing`, start 9.9.1 on its own, then reject a tampered zip and stay on
-9.9.0. The rehearsal bundle id is `com.maxkongerskov.FlowaElectron.e2e`, so it
-does not share ShipIt's cache with an installed Flowa.
-Linux is
-`node scripts/e2e-update.mjs`. Windows is the optional Actions workflow
-`.github/workflows/e2e-update-windows.yml` (no secrets).
+---
 
-Clearing recent dictations rewrites `recent.json`. It does not erase copies already in
-APFS snapshots or Time Machine.
+## Using Flowa
 
-### Dictation shortcut
+One press of the dictation shortcut starts recording, the next press stops it and pastes the
+transcript into the app you were using.
 
-One press starts dictation, the next press stops it. Flowa does not have a separate
-hold-to-talk mode: holding the key counts as a single press, which is how the fn key
-already behaved. A modifier used by itself (Right Alt, Right Option, Ctrl, …) toggles
-only when it is **tapped alone**, so AltGr and Ctrl+C keep working.
+| | Default shortcut | Other options |
+|---|---|---|
+| macOS | `fn` | Any key or chord, or a modifier tapped alone (Right Option, …) |
+| Windows | `F8` | Any key or chord, or a modifier tapped alone (Right Alt, …) |
+| Linux | `F8` | Any key or chord on X11. Wayland often blocks global shortcuts |
 
-Change it from **Home → Shortcut** (press the keys you want, Escape cancels, Reset puts
-back the default) or from the **tray menu** and the **app menu** (Dictation Shortcut:
-presets, Record Shortcut…, Reset). The new key is saved in `prefs.json` and registered
-immediately — no restart. A shortcut another app already owns, or one Flowa and the OS
-reserve (Quit, Show, Alt+Tab, and similar), is refused with a message.
+Change it from **Home → Shortcut**, the tray menu, or the app menu. On Home you can also pick
+the language (99 languages or auto-detect), the microphone, the hardware (automatic GPU, or
+CPU) and the speech model:
 
-| | Default | Single key (F8) | Modifier alone (Right Alt) |
+| Model | File | Size | Notes |
 |---|---|---|---|
-| macOS | `fn` | `globalShortcut` | `flowa-helper watch-modifiers` (Input Monitoring) |
-| Windows | `F8` | `globalShortcut` | `modifier-hook.ps1`, low-level keyboard hook. It prints the modifier name only, not the characters you type |
-| Linux | `F8` | `globalShortcut` on X11 | Not available. Wayland often cannot register global shortcuts at all |
+| Whisper large-v3 turbo (default) | `ggml-large-v3-turbo.bin` | ~1.6 GB | Bundled in the installers |
+| Whisper small (multilingual) | `ggml-small.bin` | ~466 MB | Downloaded the first time you select it |
 
-**Why F8 on Windows and Linux, not Ctrl+Shift+Space.** The 1.1.0 default was three keys
-and easy to fumble. F8 is one key, it is not a typing key, and Electron's `globalShortcut`
-can register it on every OS the installers target. Right Alt is allowed as a choice (it is
-a single key on a typical Windows keyboard) but it is a poor default: on many layouts it
-is AltGr. macOS stays on **fn**, the same single key as the Swift app.
+Settings and your recent dictations are stored locally in:
 
-**Upgrades.** If `prefs.json` already has a shortcut, it is kept. If the file exists but
-has no shortcut — or it still says `fn` on Windows/Linux, which 1.1.0 never actually
-registered — it is migrated to **Ctrl+Shift+Space** (or `fn` on macOS) and written back.
-A brand-new install gets F8 / fn. Reset switches an upgraded Windows install from
-Ctrl+Shift+Space to F8.
-
----
-
-### Local macOS install (signed + notarized, arm64)
-
-```bash
-npm run setup:mac-icons          # Assets.car + icon.icns from the Swift AppIcon set (build/Assets.xcassets)
-npx electron-vite build
-npx electron-builder --mac dir --arm64 -c.mac.identity=null
-IDENTITY=<Developer ID sha1> NOTARY_PROFILE=AC_PASSWORD scripts/sign-mac.sh release/mac-arm64/Flowa.app
-```
-
-`scripts/sign-mac.sh` signs inside-out with the hardened runtime and `build/entitlements.mac.plist`,
-then notarizes and staples. It exists because electron-builder 26 resolves the signing identity by
-display name, and that fails when the name contains "ø". The model is not bundled: the app uses
-`~/Library/Application Support/Flowa-Electron/models/ggml-large-v3-turbo.bin`.
-
----
-
-## Speech model: same model as Swift-Flowa
-
-| | Swift-Flowa | Flowa-Electron |
-|---|---|---|
-| Checkpoint | `openai/whisper-large-v3-turbo` (2024-09-30) | same |
-| Variant id | `openai_whisper-large-v3-v20240930_turbo` | reported as the same id in the UI |
-| Format | WhisperKit CoreML `.mlmodelc` (Apple-only) | whisper.cpp **ggml** `ggml-large-v3-turbo.bin`, f16 |
-| Engine | WhisperKit (ANE/GPU) | whisper.cpp v1.9.5 `whisper-server` (Metal on mac, CPU or optional Vulkan/CUDA elsewhere) |
-| File | bundled in Flowa.app | `huggingface.co/ggerganov/whisper.cpp/…/ggml-large-v3-turbo.bin`, 1,624,555,275 bytes, sha1 `4af2b29d7ec73d781377bfd1758ca957a807e941` (matches whisper.cpp `models/README.md`) |
-
-Evidence in the Swift sources:
-
-- `Flowa/Support/SpeechModelStore.swift:12` declares `static let modelVariant = "openai_whisper-large-v3-v20240930_turbo"`.
-- `Flowa/Dictation/Transcriber.swift:30` sets `modelName = SpeechModelStore.modelVariant`.
-- `Transcriber.swift:131` builds `WhisperKitConfig(model:, modelFolder:, prewarm: true, load: true, download: false)`.
-- `Transcriber.swift:209-213` sets `DecodingOptions()` defaults, with `task = .transcribe`, `language`, and `detectLanguage = (language == nil)`.
-
-The CoreML bundle cannot run on Windows or Linux, so it can't be reused directly. Electron runs the
-same weights at the same precision (f16) through ggml instead. WhisperKit's default decoding settings
-are mapped one-to-one in `src/shared/model.ts`:
-
-- greedy decoding (`-bs 1 -bo 1`)
-- temperature 0, increment 0.2 (sent per request)
-- thresholds `-et 2.4`, `-lpt -1.0` and `-nth 0.6`
-- auto-detect when the language is "Auto-detect"
-
-The server stays resident on 127.0.0.1 on a random port, like WhisperKit's loaded pipe. `whisper-cli`
-is the fallback.
-
-Results on the Swift test fixtures (`tests/fixtures`, copied from `FlowaTests/Fixtures`, Mac Studio
-with Metal):
-
-| Fixture | Transcript | Time |
-|---|---|---|
-| hello_flowa.wav (en) | "Hello Flow a confidence test." | 0.16 s |
-| quick_brown_fox.wav (en) | "the quick brown fox jumps over the lazy dog." | 0.16 s |
-| iphone_live_speak.wav (auto) | "test actually works. My words should pop up into the terminal …" | 0.34 s |
-
-The model loads in 1–4 s.
-
----
-
-## Hardware and speech model
-
-Home has two dropdowns, stored in `prefs.json` with the same pattern as the other preferences:
-
-| Preference | Key | Default | Values |
-|---|---|---|---|
-| Hardware | `flowa.hardware` | `gpu` | `gpu` (automatic), `metal`, `cuda`, `vulkan`, `cpu` |
-| Speech model | `flowa.speechModel` | `whisper-turbo` | `whisper-turbo`, `whisper-small` |
-
-**Whisper Turbo stays the default.** A saved `parakeet-tdt-0.6b-v3` value is no longer a model and loads as Turbo.
-
-**GPU (automatic)** picks a real backend, not a label. Both speech models use it:
-
-| OS | Automatic choice |
-|---|---|
-| macOS | Apple Metal, when the whisper.cpp binary was built with Metal (the default `npm run setup:whisper` on a Mac) |
-| Windows / Linux with an NVIDIA driver | NVIDIA CUDA, when `whisper-server-cuda` is staged |
-| Windows / Linux otherwise | Vulkan, when a Vulkan whisper.cpp binary is staged and a Vulkan loader (or an NVIDIA driver, for a Vulkan-instead-of-CUDA build) is present |
-| Anything else | CPU |
-
-Picking Metal, CUDA, or Vulkan directly uses that backend. When it isn't staged, or the process fails to start on it, Flowa retries on the CPU and shows a quiet yellow note on Home (the same warning banner as the other in-app status text). There is no dialog and no system notification. Choosing CPU skips the GPU attempt and shows no note.
-
-Whisper uses whisper.cpp v1.9.5. `-ng` forces CPU. CUDA and Vulkan are extra binaries (`whisper-server-cuda`, `whisper-server-vulkan`) so one `resources/bin` folder can hold more than one backend. `whisper-backends.json` records what the build script compiled. The speech-model dropdown only changes the `-m` file passed to that same binary.
-
-### Whisper Small
-
-**OpenAI Whisper small**, multilingual (not `small.en`). Same ggml f16 conversion whisper.cpp publishes, MIT license, about 466 MB:
-
-| | |
-|---|---|
-| File | `ggml-small.bin` |
-| Checkpoint | `openai/whisper-small` |
-| Source | [huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin) |
-| Size | 487,601,967 bytes |
-| SHA-1 | `55356645c2b361a969dfd0ef2c5a50d530afd8d5` (whisper.cpp v1.9.5 `models/README.md`) |
-
-`npm run setup:small` downloads it into `models/`. The app also looks in `<appData>/Flowa-Electron/models/ggml-small.bin` and downloads that file the first time Small is selected, the same way Turbo downloads `ggml-large-v3-turbo.bin`. Selecting Small restarts whisper.cpp with `ggml-small.bin`. Selecting Turbo again uses `ggml-large-v3-turbo.bin`. A Turbo file on disk does not satisfy Small.
-
-A release build still requires Turbo. `electron-builder.release.cjs` also copies `models/ggml-small.bin` when that file has been staged. Both weights stay gitignored.
-
----
-
-## Parity checklist
-
-✅ done · 🟡 partial · ⛔ not portable (with the substitute used)
-
-| Swift area | Electron | Status |
-|---|---|---|
-| RootView: onboarding → installing → home routing, `firstRunComplete` / `onboardingComplete` sync | `RootView.tsx`, `index.ts` | ✅ |
-| OnboardingView (3 permission cards, live re-check) | `OnboardingView.tsx`, `permissions.ts` | ✅ (cards adapt per OS) |
-| InstallingView (120 s prepare countdown, errors, retry) | `InstallingView.tsx`, `transcriber.ts` | ✅, plus a real download progress state |
-| HomeView (shortcut, language, mic, launch at login, max duration, acknowledgements, recent list, copy, clear) | `HomeView.tsx` | ✅ |
-| Banners (error, fn conflict, permissions) | `Banners.tsx` | ✅, plus a "shortcut taken" banner on Win/Linux |
-| HomeChrome (status pill, light/dark toggle) | `HomeChrome.tsx` | ✅ |
-| AcknowledgementsView | `AcknowledgementsView.tsx` | ✅ |
-| Theme.swift colour tokens (light/dark) | `theme.css` | ✅ |
-| Flow Bar (FloatingPanel, bottom-centre, waveform, countdown, cancel/commit) | `windows.ts`, `bar.tsx`, `bar.css` | ✅ (transparent always-on-top panel on every Space) |
-| Menu bar extra (status text, icons, Show/Reinstall/Repair/Quit) | `tray.ts` | ✅ (tray icon on Win/Linux) |
-| DictationPipeline (single-flight, silent-take skip, max-duration message, recent list) | `pipeline.ts` | ✅ |
-| AudioCapture (16 kHz mono, RMS×6.5 level, smoothing, peak, silence 0.008, max duration, device kinds) | `AudioCapture.ts`, `audioMath.ts`, `micDeviceKind.ts` | 🟡 same math. The device list comes from Chromium (`enumerateDevices`), not CoreAudio, so the Continuity/aggregate filters work on labels |
-| Transcriber (WhisperKit) | `transcriber.ts` (whisper.cpp) | ✅ same model, see above |
-| GlobalHotkey: fn tap/hold via CGEventTap | `hotkey.ts` + `shortcut.ts` + `flowa-helper` | ✅ Toggle (one press starts, the next stops; a hold is one press). macOS default `fn`. Windows/Linux default `F8` (1.1.0’s `Ctrl+Shift+Space` is kept on upgrade). Single keys and chords use `globalShortcut`. A modifier by itself uses the macOS tap or a Windows low-level hook; Linux cannot register a modifier alone |
-| TextInserter: AX check, activate target, ⌘V via CGEvent, clipboard floor | `textInserter.ts` | ✅ mac (helper) · ✅ Windows (PowerShell keybd_event, untested on real Windows) · 🟡 Linux (needs xdotool / wtype / ydotool, otherwise clipboard only) |
-| FnConflictDetector (`AppleFnUsageType`) | `fnConflict.ts` | ✅ mac · n/a elsewhere |
-| PermissionChecker (Mic, Input Monitoring, Accessibility) | `permissions.ts` | ✅ mac · auto-granted where the OS has no such gate |
-| Repair (tccutil reset, lsregister, relaunch) | `repair.ts` | ✅ mac (packaged only) · 🟡 elsewhere (re-check + relaunch only) |
-| LoginItem (SMAppService) | `loginItem.ts` | ✅ mac/win (`setLoginItemSettings`) · ✅ Linux (XDG autostart) |
-| Preferences (UserDefaults keys) | `store.ts` → `prefs.json` | ✅ same keys |
-| Recent dictations JSON | `recent.ts` | ✅ format-compatible (sorted keys, ISO 8601, upper-case UUIDs) |
-| Language catalog (99 + auto) | `languages.ts` | ✅ generated from `LanguageOption.swift` |
-| Unit tests (Swift `FlowaTests`) | `tests/*.test.ts` (99) | ✅ logic tests ported, including shortcut validation, migration, the recorder, and update checks. 🟡 the E2E fixtures run through the dev self-test, not under vitest |
-| Code signing / notarization | – | ⛔ not done yet (needs certificates) |
-| Update check | `electron-updater` → GitHub `latest*.yml`, Home banner | ✅ Check for updates, then Download with progress, then quit and restart. Every artifact is ed25519-signed. macOS also requires Developer ID. Unsigned Mac builds and unsupported Linux packages open the release page |
-
-## Platform-dependent parts and their equivalents
-
-| Swift (file) | Why it is platform-bound | Electron equivalent |
-|---|---|---|
-| `Hotkey/GlobalHotkey.swift:76-113` CGEventTap on `flagsChanged`/fn | macOS Quartz API | mac: `flowa-helper watch-fn` and `watch-modifiers`. Win: `globalShortcut`, or `resources/win/modifier-hook.ps1` (`WH_KEYBOARD_LL`) for a modifier alone. Linux: `globalShortcut` only (no modifier-only, and Wayland often cannot grab keys) |
-| `Permissions/PermissionChecker.swift:53-83` AVCaptureDevice / IOHIDCheckAccess / AXIsProcessTrusted | macOS TCC | `systemPreferences.getMediaAccessStatus` / `askForMediaAccess`, helper `check-im` / `request-im`, `isTrustedAccessibilityClient`. Win/Linux: no gates; Linux paste-tool detection |
-| `Dictation/TextInserter.swift:46-75` AX + CGEvent ⌘V | macOS | helper `paste <pid>` (mac) · PowerShell `SetForegroundWindow` + `keybd_event` Ctrl+V (Win) · xdotool / wtype / ydotool (Linux) · clipboard always |
-| `Dictation/AudioCapture.swift:58-253` CoreAudio HAL device list + AVAudioEngine | macOS | `getUserMedia` + `AudioContext` (16 kHz) in the Flow Bar renderer |
-| `Dictation/Transcriber.swift` WhisperKit / CoreML | Apple-only | whisper.cpp server, ggml model |
-| `Hotkey/FloatingPanel.swift` NSPanel | AppKit | frameless transparent `BrowserWindow` (`type: 'panel'` on mac, always on top, every workspace) |
-| `FlowaApp.swift:111` MenuBarExtra | SwiftUI/macOS | `Tray` with template icons |
-| `FlowaApp.swift:23-32` SMAppService | macOS 13+ | `app.setLoginItemSettings` / XDG autostart |
-| `Hotkey/FnConflictDetector.swift:51` `AppleFnUsageType` | macOS defaults | `defaults read com.apple.HIToolbox AppleFnUsageType` (mac only) |
-| `Permissions/Repair.swift:66-72` tccutil + lsregister | macOS | same commands (packaged mac); re-check + relaunch elsewhere |
-| `Support/SystemSettings.swift` `x-apple.systempreferences:` URLs | macOS | same URLs via `shell.openExternal` (mac) · `ms-settings:` (Win) · no-op (Linux) |
-
-## Data location
-
-The Electron app keeps its data separate from Swift-Flowa, so the two can run side by side:
-
-| OS | Location |
+| OS | Folder |
 |---|---|
 | macOS | `~/Library/Application Support/Flowa-Electron/` |
 | Windows | `%APPDATA%\Flowa-Electron\` |
 | Linux | `~/.config/Flowa-Electron/` |
 
-That folder holds `prefs.json`, `recent.json` and, when downloaded in-app, `models/`. The bundle id is
-`com.maxkongerskov.FlowaElectron`.
+---
+
+## What goes over the network
+
+Flowa does not send audio or text anywhere. It only connects to the internet for:
+
+1. **Update checks** against this repository's GitHub Releases (once at launch, and when you
+   click *Check for updates*).
+2. **Model downloads** from
+   [huggingface.co/ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp), only when
+   a model is not already on disk (for example the first time you pick Whisper small). Each file is
+   checked against its SHA-1 before use.
+
+whisper.cpp runs as a local server bound to `127.0.0.1` on a random port.
+
+---
+
+## How updates work
+
+Flowa uses [electron-updater](https://www.electron.build/auto-update) with GitHub Releases as the
+feed (`latest.yml`, `latest-mac.yml`, `latest-linux.yml`).
+
+1. Flowa checks the feed at launch. When a newer version exists, Home shows a banner.
+2. Nothing downloads until you click **Download**. Progress stays in the banner.
+3. Every update file is signed with **ed25519** over its SHA-256. The app refuses to install a
+   file whose signature does not match the public key built into it
+   (`src/shared/updatePublicKey.ts`). On macOS the app must also carry a valid Developer ID
+   signature.
+4. When the download is verified, Flowa quits and restarts into the new version.
+
+| Install type | Updates itself? |
+|---|---|
+| macOS (dmg install of 1.2.2 or newer) | Yes |
+| Windows NSIS | Yes |
+| Linux AppImage | Yes |
+| Linux `.deb` | Yes, when `dpkg`/`apt` is available; otherwise opens the release page |
+| Builds you compile yourself | No. Unsigned builds open the release page instead |
+
+The private signing key is kept offline by the maintainer and is never committed.
+
+---
+
+## Build from source
+
+### Requirements
+
+- Node.js 20 or newer (CI uses Node 22) and npm
+- git and CMake
+- A C/C++ toolchain: Xcode Command Line Tools (macOS), Visual Studio 2022 Build Tools (Windows),
+  `build-essential` (Linux)
+- macOS only: Swift (from Xcode Command Line Tools) for the small native helper
+
+### Run it locally
+
+```bash
+git clone https://github.com/maxkongerskov/flowa-electron.git
+cd flowa-electron
+npm ci                      # installs dependencies and fetches the Electron binary (postinstall)
+npm run setup:mac-helper    # macOS only: builds resources/mac/flowa-helper (fn key + paste)
+npm run setup:whisper       # builds whisper.cpp v1.9.5 into resources/bin/<platform>-<arch>/
+npm run setup:model         # downloads ggml-large-v3-turbo.bin (~1.6 GB, SHA-1 checked) into models/
+npm run setup:small         # optional: ggml-small.bin (~466 MB) into models/
+npm start                   # builds and runs the app
+```
+
+`npm run dev` runs the app with hot reload for the renderer. If you skip `setup:model`, the app
+downloads the model into its data folder on first run.
+
+Optional whisper.cpp GPU variants (Windows / Linux):
+
+```bash
+FLOWA_WHISPER_VARIANT=cuda   npm run setup:whisper   # whisper-server-cuda
+FLOWA_WHISPER_VARIANT=vulkan npm run setup:whisper   # whisper-server-vulkan (needs the Vulkan SDK)
+```
+
+### Tests and type checks
+
+```bash
+npm test             # vitest unit tests (tests/**/*.test.ts)
+npm run typecheck    # tsc --noEmit on the main/preload and renderer projects
+```
+
+Development self-tests that need no hotkey (disabled in packaged builds):
+
+```bash
+npx electron-vite build
+E=node_modules/electron/dist/Electron.app/Contents/MacOS/Electron   # Windows/Linux: node_modules/electron/dist/electron(.exe)
+FLOWA_SELFTEST=capture FLOWA_SELFTEST_QUIT=1 $E .
+FLOWA_SELFTEST=transcribe:$PWD/tests/fixtures/quick_brown_fox.wav FLOWA_SELFTEST_LANG=en FLOWA_SELFTEST_QUIT=1 $E .
+```
+
+### Package installers
+
+```bash
+npm run dist:mac     # dmg (macOS host)
+npm run dist:win     # NSIS installer
+npm run dist:linux   # AppImage + deb
+```
+
+These use `electron-builder.yml` and bundle whatever is in `resources/bin/<platform>-<arch>`,
+`resources/mac` and `resources/win`. They do **not** bundle the speech model; the app downloads it
+on first run. Windows and Linux installers can be cross-built on a Mac, but the whisper.cpp binary
+in `resources/bin/<platform>-<arch>` must be built for the target OS.
+
+Your own builds are unsigned and do not self-update. Official releases are built by the maintainer
+with `npm run release`; the full release procedure (signing, notarization, update rehearsal) is
+in the release scripts under `scripts/`.
+
+---
 
 ## Project layout
 
 ```
-src/shared     pure ported logic (prefs, shortcut, languages, mic kinds, recent, wav, audio math, status copy, model)
-src/main       Electron main: transcriber, pipeline, hotkey, windows, tray, permissions, paste, repair
-src/preload    contextIsolated bridges (window.flowa, window.flowaBar)
+src/shared     pure logic: prefs, shortcuts, languages, models, update policy, audio math
+src/main       Electron main process: transcriber, pipeline, hotkey, windows, tray, permissions, paste, updates
+src/preload    context-isolated bridges (window.flowa, window.flowaBar)
 src/renderer   React views (index.html = main window, bar.html = Flow Bar)
-native/macos   flowa-helper.swift (fn tap, Input Monitoring, frontmost app, ⌘V)
-scripts        build-whisper.mjs, fetch-model.mjs, build-mac-helper.sh
-tests          vitest suites + Swift WAV fixtures
+native/macos   flowa-helper.swift (fn key tap, Input Monitoring, frontmost app, ⌘V)
+resources      icons, tray images, Windows modifier hook
+scripts        whisper.cpp build, model fetch, packaging and release scripts
+tests          vitest suites and WAV fixtures
 ```
 
-Security: `contextIsolation` and `sandbox` are on and `nodeIntegration` is off. There is a strict CSP,
-and only our own pages may use the microphone. Navigation and `window.open` are blocked.
+Security: `contextIsolation` and `sandbox` are on, `nodeIntegration` is off, a strict CSP is set,
+only Flowa's own pages may use the microphone, and navigation and `window.open` are blocked.
+
+---
+
+## Contributing
+
+Contributions are welcome: bug reports, fixes, translations of the UI copy, and platform testing
+(especially Windows and Linux desktops).
+
+### Issues
+
+- Search [existing issues](https://github.com/maxkongerskov/flowa-electron/issues) first.
+- For bugs include: Flowa version, OS and version, CPU/GPU, the shortcut you use, what you
+  expected, and what happened. Logs help; do **not** paste dictated text you would not want public.
+- Security problems: please do not open a public issue. Contact the maintainer privately via the
+  GitHub profile instead.
+
+### Pull requests
+
+1. Fork the repo and create a branch from `main`.
+2. Keep each PR focused on one change, and explain *why* in the description.
+3. Add or update tests in `tests/` for logic changes. Pure logic belongs in `src/shared` so it can
+   be tested without Electron.
+4. Before you open the PR, these must pass locally:
+   ```bash
+   npm ci
+   npm run typecheck
+   npm test
+   ```
+5. For UI or platform changes, say which OS you tested on and attach a screenshot if relevant.
+6. Do not commit model weights (`models/*.bin`), whisper.cpp builds (`resources/bin/`, `vendor/`),
+   build output, or any keys. `.gitignore` already covers these.
+
+### Code style
+
+There is no separate linter or formatter config in the repo. Follow the existing code:
+
+- TypeScript in `strict` mode (`tsconfig.node.json`, `tsconfig.web.json`); the type check must be clean.
+- ES modules, 2-space indentation, single quotes, no semicolons.
+- React function components with hooks in `src/renderer`.
+- Short comments that explain *why*, not *what*.
+- Import shared code through the `@shared/*` alias.
+
+By submitting a contribution you agree that it is licensed under the MIT License of this project.
+
+---
 
 ## License
 
-MIT (same as Swift-Flowa). whisper.cpp is MIT. The Whisper weights are MIT (OpenAI).
+Flowa is released under the [MIT License](LICENSE). Copyright (c) 2026 Max Køngerskov.
 
-## Open questions
+Flowa includes or downloads third-party software and model weights, including whisper.cpp
+(MIT), OpenAI Whisper model weights (MIT) and Electron (MIT). See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full list and their licenses.
 
-1. **Data and bundle id.** Should Electron keep its own data (as now), or import Swift-Flowa's
-   recent dictations and preferences once? The format is already compatible.
-2. **Default shortcut on Windows/Linux.** Resolved in 1.2.0: new installs use `F8`. Upgrades
-   keep `Ctrl+Shift+Space`. Right Alt can be chosen on macOS and Windows; Linux cannot
-   register a modifier by itself.
-3. **Model in installers vs. first-run download.** The Whisper weights stay inside the installers.
-4. **GitHub target.** Should this replace `maxkongerskov/Flowa`, or go into `Flowa-Windows` or a new repo?
-5. **Signing.** Signing/notarization needs an Apple Developer ID (team 6LZ2DS9JPD) and a Windows code-signing certificate.
-6. **Version number.** App version is 1.2.2 (`package.json`). `npm run release -- 1.2.2` publishes
-   that version after tests and a packaged update rehearsal. `npm run release -- patch` publishes
-   the next patch. The download table above stays on the last installers that were actually published.
+## Trademark
+
+The name "Flowa" and the Flowa icon and logo are not covered by the MIT license and are not licensed for reuse. Forks and redistributed modified versions must use a different name and a different logo. The source code itself remains available under the MIT License.
