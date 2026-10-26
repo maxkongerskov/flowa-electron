@@ -4,6 +4,7 @@
 // The updater zip is never offered as a link. Unsigned macOS builds, and Linux
 // packages electron-updater cannot apply, open the public installer instead.
 
+/** GitHub Releases feed baked into the app. 1.2.2 and later read this repo. */
 export const UPDATE_REPOSITORY = {
   owner: 'maxkongerskov',
   repo: 'flowa-electron'
@@ -129,8 +130,8 @@ export function assetDownloadUrl(version: string, fileName: string): string {
 export function isFlowaReleaseUrl(url: string): boolean {
   try {
     const parsed = new URL(url)
-    const prefix = `/${UPDATE_REPOSITORY.owner}/${UPDATE_REPOSITORY.repo}/`
-    return parsed.protocol === 'https:' && parsed.hostname === 'github.com' && parsed.pathname.startsWith(prefix)
+    if (parsed.protocol !== 'https:' || parsed.hostname !== 'github.com') return false
+    return parsed.pathname.startsWith(`/${UPDATE_REPOSITORY.owner}/${UPDATE_REPOSITORY.repo}/`)
   } catch {
     return false
   }

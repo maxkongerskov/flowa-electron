@@ -58,7 +58,7 @@ export function speechModelHint(id: SpeechModelId): string {
 
 export function hardwareHint(platform: string): string {
   if (platform === 'darwin') return 'Automatic uses Apple Metal on this Mac.'
-  return 'Automatic uses NVIDIA CUDA when an NVIDIA driver is present, and Vulkan for other graphics chips.'
+  return 'Automatic uses NVIDIA CUDA when an NVIDIA driver is present, and Vulkan only when a real GPU is present. Software Vulkan stays on the CPU.'
 }
 
 export function backendLabel(backend: RuntimeBackend): string {
@@ -151,13 +151,19 @@ export interface BackendPlan {
   note: string | null
 }
 
-function automaticBackend(platform: string, probe: GpuProbe, gpu: readonly GpuBackend[]): GpuBackend | null {
+function automaticBackend(
+  platform: string,
+  probe: GpuProbe,
+  gpu: readonly GpuBackend[],
+  skipRememberedVulkan: boolean
+): GpuBackend | null {
   // macOS stays on Metal. CUDA and Vulkan are explicit choices there.
   if (platform === 'darwin') return probe.metal && gpu.includes('metal') ? 'metal' : null
   // Windows and Linux: NVIDIA → CUDA when that backend is actually staged.
   if (probe.nvidia && gpu.includes('cuda')) return 'cuda'
-  // Vulkan when CUDA (or Metal) isn't the right fit: other GPUs, and NVIDIA
-  // machines whose build shipped Vulkan instead of CUDA.
+  // Vulkan only for a real GPU. A remembered failure stays on CPU until the
+  // hardware preference is changed. NVIDIA without a CUDA binary still uses Vulkan.
+  if (skipRememberedVulkan) return null
   if (gpu.includes('vulkan') && (probe.vulkan || probe.nvidia)) return 'vulkan'
   return null
 }
@@ -187,8 +193,10 @@ function planFor(
 /**
  * Pick the backend we will actually launch.
  * `gpu` (the default) is automatic: Metal on macOS, CUDA when NVIDIA is
- * present and staged, otherwise Vulkan when that backend can run.
- * An explicit backend that isn't staged falls back to CPU with `note` set.
+ * present and staged, otherwise Vulkan when a real GPU is present.
+ * `skipRememberedVulkan` is set after a Vulkan server failed or ran past its
+ * time budget. An explicit Vulkan choice still tries it. An explicit backend
+ * that isn't staged falls back to CPU with `note` set.
  */
 export function selectBackend(
   pref: HardwarePref,
@@ -196,16 +204,23 @@ export function selectBackend(
   probe: GpuProbe,
   gpu: readonly GpuBackend[],
   builds: WhisperManifest,
-  modelLabel: string
+  modelLabel: string,
+  skipRememberedVulkan = false
 ): BackendPlan {
   if (pref === 'cpu') return planFor('cpu', builds, modelLabel, false, 'gpu')
   if (pref === 'gpu') {
-    const chosen = automaticBackend(platform, probe, gpu)
+    const chosen = automaticBackend(platform, probe, gpu, skipRememberedVulkan)
     if (!chosen) return planFor('cpu', builds, modelLabel, true, 'gpu')
     return planFor(chosen, builds, modelLabel, false, 'gpu')
   }
   if (gpu.includes(pref)) return planFor(pref, builds, modelLabel, false, pref)
   return planFor('cpu', builds, modelLabel, true, pref)
+}
+
+/** Folder that holds one Vulkan or CUDA engine, isolated from the CPU shared libraries. */
+export function whisperVariantDir(kind: WhisperBinaryKind): string | null {
+  if (kind === 'vulkan' || kind === 'cuda') return `whisper-server-${kind}`
+  return null
 }
 
 export function whisperServerFile(kind: WhisperBinaryKind, windows: boolean): string {
@@ -216,6 +231,112 @@ export function whisperServerFile(kind: WhisperBinaryKind, windows: boolean): st
 export function whisperCliFile(kind: WhisperBinaryKind, windows: boolean): string {
   const stem = kind === 'default' ? 'whisper-cli' : `whisper-cli-${kind}`
   return windows ? `${stem}.exe` : stem
+}
+
+/** Name inside whisper-server-vulkan/: the executable keeps upstream's name. */
+export function whisperNestedExecutable(role: 'server' | 'cli', windows: boolean): string {
+  const stem = role === 'server' ? 'whisper-server' : 'whisper-cli'
+  return windows ? `${stem}.exe` : stem
+}
+
+/**
+ * Cold Turbo load on a real GPU fits in this window. A software Vulkan device
+ * loading Turbo does not, and neither does a server that never opens its port.
+ */
+export const VULKAN_READY_MS = 60_000
+/** Prewarm is one second of silence, including the first shader compile. */
+export const VULKAN_FIRST_INFER_MS = 30_000
+
+export type VulkanSkipReason = 'start-failed' | 'ready-timeout' | 'transcription-timeout'
+
+export const vulkanAutoSkipFile = 'vulkan-auto-skip.json'
+
+const SOFTWARE_VULKAN = /lavapipe|llvmpipe|swiftshader|basic\s*render|\bwarp\b/i
+
+/** lavapipe, llvmpipe, SwiftShader, Microsoft Basic Render, and WARP. */
+export function vulkanDeviceIsSoftware(name: string): boolean {
+  return SOFTWARE_VULKAN.test(name)
+}
+
+interface VulkanSummaryDevice {
+  type: string | null
+  label: string
+}
+
+/** One vulkaninfo device. Names come from deviceName and driverName only. */
+export function vulkanSummaryDevices(summary: string): VulkanSummaryDevice[] {
+  const chunks = summary.split(/\n(?=[ \t]*GPU\d+[ \t]*:)/)
+  const devices: VulkanSummaryDevice[] = []
+  for (const chunk of chunks) {
+    const type = /PHYSICAL_DEVICE_TYPE_([A-Z0-9_]+)/.exec(chunk)?.[1] ?? null
+    const labels = [...chunk.matchAll(/^[ \t]*(?:deviceName|driverName)[ \t]*=[ \t]*(.+)$/gim)].map((match) => match[1].trim())
+    const label = labels.join(' ')
+    if (!type && !label) continue
+    devices.push({ type, label })
+  }
+  return devices
+}
+
+/**
+ * `true` when any device is a real GPU. `false` when every device is a CPU
+ * type or a software implementation. `null` when the summary names no device
+ * (unknown, so the caller may still try Vulkan).
+ */
+export function vulkanSummaryHasGpu(summary: string): boolean | null {
+  const devices = vulkanSummaryDevices(summary)
+  if (devices.length === 0) return null
+  const usable = devices.some((device) => {
+    if (vulkanDeviceIsSoftware(device.label)) return false
+    if (!device.type || device.type === 'CPU') return false
+    return true
+  })
+  if (usable) return true
+  const classified = devices.some((device) => device.type !== null || vulkanDeviceIsSoftware(device.label))
+  return classified ? false : null
+}
+
+/** Loader is present. A missing summary means try Vulkan. Software-only does not. */
+export function vulkanSummaryIsUsable(summary: string | null): boolean {
+  if (summary == null) return true
+  return vulkanSummaryHasGpu(summary) !== false
+}
+
+export interface VulkanAutoSkipRecord {
+  reason: VulkanSkipReason
+  version: string
+  at: string
+}
+
+export function encodeVulkanAutoSkip(reason: VulkanSkipReason, version: string, at = new Date().toISOString()): string {
+  return `${JSON.stringify({ reason, version, at })}\n`
+}
+
+export function parseVulkanAutoSkip(raw: string | null | undefined): VulkanAutoSkipRecord | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as { reason?: unknown; version?: unknown; at?: unknown }
+    if (parsed.reason !== 'start-failed' && parsed.reason !== 'ready-timeout' && parsed.reason !== 'transcription-timeout') return null
+    if (typeof parsed.version !== 'string' || parsed.version.trim() === '') return null
+    return { reason: parsed.reason, version: parsed.version, at: typeof parsed.at === 'string' ? parsed.at : '' }
+  } catch {
+    return null
+  }
+}
+
+/** Active only for the app version that wrote the file. A newer build retries Vulkan. */
+export function vulkanAutoSkipReason(raw: string | null | undefined, appVersion: string): VulkanSkipReason | null {
+  const parsed = parseVulkanAutoSkip(raw)
+  if (!parsed || parsed.version !== appVersion) return null
+  return parsed.reason
+}
+
+/** Why a Vulkan attempt is not worth retrying until the user changes Hardware. */
+export function vulkanSkipReason(phase: 'ready' | 'transcribe', error: unknown): VulkanSkipReason {
+  const name = error && typeof error === 'object' && 'name' in error ? String((error as { name: unknown }).name) : ''
+  const message = error instanceof Error ? error.message : String(error ?? '')
+  const timedOut = name === 'TimeoutError' || message.includes('did not start in time')
+  if (!timedOut) return 'start-failed'
+  return phase === 'ready' ? 'ready-timeout' : 'transcription-timeout'
 }
 
 /** True when a whisper.cpp log shows the requested GPU backend did not come up. */

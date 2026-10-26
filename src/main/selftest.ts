@@ -10,7 +10,9 @@ import type { DictationPipeline, CaptureBridge } from './pipeline'
 
 export async function runSelfTest(pipeline: DictationPipeline, capture: CaptureBridge): Promise<void> {
   const spec = process.env.FLOWA_SELFTEST
-  if (!spec || app.isPackaged) return
+  // Packaged builds ignore the dev self-test. CI sets FLOWA_PACKAGED_SMOKE=1
+  // so a packaged engine can be exercised without a hotkey.
+  if (!spec || (app.isPackaged && process.env.FLOWA_PACKAGED_SMOKE !== '1')) return
   const done = (): void => {
     if (process.env.FLOWA_SELFTEST_QUIT) setTimeout(() => app.quit(), 300)
   }
@@ -31,7 +33,7 @@ export async function runSelfTest(pipeline: DictationPipeline, capture: CaptureB
       const file = spec.slice('transcribe:'.length)
       const t = pipeline.transcriber
       await t.loadIfNeeded()
-      console.log(`[selftest] engine status=${JSON.stringify(t.status)} info=${JSON.stringify(t.engineInfo)}`)
+      console.log(`[selftest] engine status=${JSON.stringify(t.status)} info=${JSON.stringify(t.engineInfo)} notice=${JSON.stringify(t.notice)}`)
       const lang = process.env.FLOWA_SELFTEST_LANG || null
       const t0 = Date.now()
       const text = await t.transcribe(file, lang)

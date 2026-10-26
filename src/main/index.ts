@@ -9,7 +9,8 @@ import { isEphemeralAggregateUID } from '@shared/micDeviceKind'
 import { allGranted, machineNoun, menuStatusText, trayIconName } from '@shared/status'
 import { languageDisplayName } from '@shared/languages'
 import { isHardwarePref, isSpeechModelId, collectEngineNotices } from '@shared/speech'
-import { configureUserDataPath } from './paths'
+import { configureUserDataPath, paths } from './paths'
+import { clearVulkanAutoSkip, readVulkanAutoSkip } from './vulkanSkip'
 import { prefs } from './store'
 import { permissions } from './permissions'
 import { fnConflict } from './fnConflict'
@@ -50,7 +51,10 @@ if (!skipSingleInstance && !app.requestSingleInstanceLock()) {
 
 async function main(): Promise<void> {
   await app.whenReady()
+  console.log(`[Flowa] version ${app.getVersion()}`)
   noteE2E(`booted ${app.getVersion()} pid=${process.pid}`)
+  // A skip written by an older build is dropped before the first engine plan.
+  readVulkanAutoSkip(paths.userData, app.getVersion())
 
   // Only our own pages may use the microphone.
   const ours = (url: string): boolean => url.startsWith('file://') || (!!process.env.ELECTRON_RENDERER_URL && url.startsWith(process.env.ELECTRON_RENDERER_URL))
@@ -380,7 +384,11 @@ async function main(): Promise<void> {
       case PrefKey.shortcut:
         return applyShortcut(value)
       case PrefKey.hardware:
-        if (isHardwarePref(value)) prefs.set(key, value)
+        if (isHardwarePref(value)) {
+          // A new choice is allowed to try Vulkan again, including re-selecting automatic.
+          clearVulkanAutoSkip(paths.userData)
+          prefs.set(key, value)
+        }
         break
       case PrefKey.speechModel:
         if (isSpeechModelId(value)) prefs.set(key, value)

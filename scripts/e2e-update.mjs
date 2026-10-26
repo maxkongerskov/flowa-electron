@@ -423,6 +423,28 @@ function canSudo() {
   return result.status === 0
 }
 
+// electron-updater tries pkexec before sudo. A runner has pkexec and
+// passwordless sudo, and no polkit agent, so pkexec exits 127 and the deb
+// install never starts. This directory's pkexec forwards to sudo -n.
+export function passwordlessPkexecDir(dir) {
+  const fs = require('node:fs')
+  fs.mkdirSync(dir, { recursive: true })
+  const wrapper = path.join(dir, 'pkexec')
+  // Built as plain strings. A template that starts a line with #! is a syntax
+  // error for the Windows test loader, and TypeScript drops the export.
+  const lines = [
+    '#!' + '/bin/sh',
+    'if [ "$1" = "--disable-internal-agent" ]; then',
+    '  shift',
+    'fi',
+    'exec sudo -n "$@"',
+    ''
+  ]
+  fs.writeFileSync(wrapper, lines.join('\n'))
+  fs.chmodSync(wrapper, 0o755)
+  return dir
+}
+
 async function linuxDeb(work, publicKey, privateKey) {
   await cleanupE2ERehearsal()
   if (!canSudo()) {
@@ -462,6 +484,8 @@ async function linuxDeb(work, publicKey, privateKey) {
       await new Promise((resolve) => setTimeout(resolve, 400))
       const env = appEnv(process.env, url, publicKey, status, home)
       env.DISPLAY = xvfb.display
+      const sudoBin = passwordlessPkexecDir(path.join(work, 'sudo-bin'))
+      env.PATH = `${sudoBin}${path.delimiter}${env.PATH ?? ''}`
       try {
         return await finishLaunch(launchAndWait(exe, ['--no-sandbox'], env, status, predicate, 180_000, log))
       } finally {

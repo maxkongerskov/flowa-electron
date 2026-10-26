@@ -4,7 +4,8 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { assertMacRehearsal, assertTamperRehearsal, macFeedOptions, removeTreeRetrying, rewriteChecksumKeepSignature } from '../scripts/e2e-update.mjs'
+import { spawnSync } from 'node:child_process'
+import { assertMacRehearsal, assertTamperRehearsal, macFeedOptions, passwordlessPkexecDir, removeTreeRetrying, rewriteChecksumKeepSignature } from '../scripts/e2e-update.mjs'
 import { generateUpdateKeyPair, sha256File, verifySha256 } from '../scripts/update-trust.mjs'
 import { verifyUpdateFeeds, writeUpdateFeeds } from '../scripts/update-feed.mjs'
 
@@ -126,11 +127,20 @@ describe('Mac update rehearsal', () => {
       expect(fn).toContain('assertTamperRehearsal')
       expect(fn.indexOf("'negative'")).toBeGreaterThan(fn.indexOf("'positive'"))
     }
+    expect(debFn).toContain('passwordlessPkexecDir')
     const release = readFileSync(path.resolve('scripts/build-release.sh'), 'utf8')
     const publish = readFileSync(path.resolve('scripts/publish-release.sh'), 'utf8')
     const feed = readFileSync(path.resolve('scripts/update-feed.mjs'), 'utf8')
     expect(release).not.toContain('macArch')
     expect(publish).not.toContain('macArch')
     expect(feed).toContain('writeUpdateFeeds(resolved, version, { privateKeyPem })')
+  })
+
+  it('forwards the deb installer through passwordless sudo when pkexec has no agent', () => {
+    if (spawnSync('sudo', ['-n', 'true']).status !== 0) return
+    const dir = passwordlessPkexecDir(mkdtempSync(path.join(tmpdir(), 'flowa-pkexec-')))
+    const result = spawnSync(path.join(dir, 'pkexec'), ['--disable-internal-agent', '/bin/echo', 'deb-ok'], { encoding: 'utf8' })
+    expect(result.status).toBe(0)
+    expect(result.stdout.trim()).toBe('deb-ok')
   })
 })

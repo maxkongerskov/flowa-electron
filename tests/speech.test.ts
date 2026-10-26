@@ -1,13 +1,17 @@
-import fs from 'node:fs'
+import fs, { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { cliArgs, ggmlModel, ggmlSmall, ggmlWeightsFor, serverArgs } from '@shared/model'
+import { cliArgs, ggmlModel, ggmlSmall, ggmlWeightsFor, modelOverridePath, serverArgs } from '@shared/model'
 import { coercePrefs, PrefKey } from '@shared/prefs'
 import {
-  assumedWhisperManifest, collectEngineNotices, gpuFallbackNote, hardwareChoices, isHardwarePref, isSpeechModelId,
+  assumedWhisperManifest, collectEngineNotices, encodeVulkanAutoSkip, gpuFallbackNote, hardwareChoices, isHardwarePref, isSpeechModelId,
   type WhisperManifest,
-  normalizeWhisperManifest, selectBackend, speechModelChoices, speechModelHint, whisperGpuBackends, whisperLogsShowGpuFailure,
-  whisperSmallId, whisperTurboId
+  normalizeWhisperManifest, selectBackend, speechModelChoices, speechModelHint, VULKAN_FIRST_INFER_MS, VULKAN_READY_MS,
+  parseVulkanAutoSkip, vulkanAutoSkipReason, vulkanDeviceIsSoftware, vulkanSkipReason, vulkanSummaryHasGpu, vulkanSummaryIsUsable, whisperGpuBackends,
+  whisperLogsShowGpuFailure, whisperNestedExecutable, whisperSmallId, whisperTurboId, whisperVariantDir
 } from '@shared/speech'
+import { clearVulkanAutoSkip, readVulkanAutoSkip, writeVulkanAutoSkip } from '../src/main/vulkanSkip'
 
 const macMetal = assumedWhisperManifest('darwin')
 const cpuOnly = assumedWhisperManifest('linux')
@@ -137,7 +141,99 @@ describe('fallback copy', () => {
   it('reads GPU failure out of whisper.cpp logs', () => {
     expect(whisperLogsShowGpuFailure('whisper_init: use gpu    = 0', 'metal')).toBe(true)
     expect(whisperLogsShowGpuFailure('ggml_vulkan: no devices found', 'vulkan')).toBe(true)
+    expect(whisperLogsShowGpuFailure('ggml_vulkan: No devices found.', 'vulkan')).toBe(true)
     expect(whisperLogsShowGpuFailure('ggml_metal_init: using Metal', 'metal')).toBe(false)
     expect(normalizeWhisperManifest({ default: ['metal'], binaries: { cuda: true } }, 'linux').default).toEqual(['cpu', 'metal'])
+  })
+  it('treats a Vulkan CPU device as not a GPU and keeps discrete and integrated GPUs', () => {
+    expect(vulkanSummaryHasGpu('deviceType = PHYSICAL_DEVICE_TYPE_CPU\ndeviceName = llvmpipe')).toBe(false)
+    expect(vulkanSummaryHasGpu('deviceType = PHYSICAL_DEVICE_TYPE_DISCRETE_GPU')).toBe(true)
+    expect(vulkanSummaryHasGpu('deviceType = PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU')).toBe(true)
+    expect(vulkanSummaryHasGpu('no devices')).toBeNull()
+    expect(vulkanSummaryIsUsable(null)).toBe(true)
+    expect(whisperVariantDir('vulkan')).toBe('whisper-server-vulkan')
+    expect(whisperNestedExecutable('server', false)).toBe('whisper-server')
+    expect(whisperNestedExecutable('cli', true)).toBe('whisper-cli.exe')
+  })
+  it('automatic mode stays on CPU for lavapipe and other software Vulkan devices', () => {
+    const lavapipe = [
+      'deviceType         = PHYSICAL_DEVICE_TYPE_CPU',
+      'deviceName         = llvmpipe (LLVM 20.1.2, 256 bits)',
+      'driverName         = llvmpipe'
+    ].join('\n')
+    const software = [
+      lavapipe,
+      'GPU0:\n\tdeviceType = PHYSICAL_DEVICE_TYPE_CPU\n\tdeviceName = lavapipe\n\tdriverName = lavapipe',
+      'GPU0:\n\tdeviceType = PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU\n\tdeviceName = SwiftShader Device (LLVM 16.0.0)\n\tdriverName = SwiftShader',
+      'GPU0:\n\tdeviceType = PHYSICAL_DEVICE_TYPE_CPU\n\tdeviceName = Microsoft Basic Render Driver',
+      'GPU0:\n\tdeviceType = PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU\n\tdeviceName = WARP'
+    ]
+    for (const summary of software) {
+      expect(vulkanSummaryHasGpu(summary), summary).toBe(false)
+      expect(vulkanSummaryIsUsable(summary), summary).toBe(false)
+      expect(vulkanDeviceIsSoftware(summary)).toBe(true)
+    }
+    const probe = { metal: false, nvidia: false, vulkan: false }
+    for (const platform of ['linux', 'win32']) {
+      const plan = selectBackend('gpu', platform, probe, whisperGpuBackends(withVulkan), withVulkan, 'Whisper Turbo')
+      expect(plan.backend, platform).toBe('cpu')
+      expect(plan.whisperBinary).toBe('default')
+      expect(plan.fellBack).toBe(true)
+    }
+    const mixed = [
+      'GPU0:',
+      '\tdeviceType = PHYSICAL_DEVICE_TYPE_DISCRETE_GPU',
+      '\tdeviceName = AMD Radeon RX 6800',
+      'GPU1:',
+      '\tdeviceType = PHYSICAL_DEVICE_TYPE_CPU',
+      '\tdeviceName = llvmpipe (LLVM 15.0.7, 256 bits)'
+    ].join('\n')
+    expect(vulkanSummaryHasGpu(mixed)).toBe(true)
+    const gpu = selectBackend('gpu', 'linux', { metal: false, nvidia: false, vulkan: true }, whisperGpuBackends(withVulkan), withVulkan, 'Whisper Turbo')
+    expect(gpu.backend).toBe('vulkan')
+    const remembered = selectBackend('gpu', 'linux', { metal: false, nvidia: false, vulkan: true }, whisperGpuBackends(withVulkan), withVulkan, 'Whisper Turbo', true)
+    expect(remembered.backend).toBe('cpu')
+    const explicit = selectBackend('vulkan', 'win32', probe, whisperGpuBackends(withVulkan), withVulkan, 'Whisper Turbo', true)
+    expect(explicit.backend).toBe('vulkan')
+    const cuda = selectBackend('gpu', 'linux', nvidia, whisperGpuBackends(withCuda), withCuda, 'Whisper Turbo', true)
+    expect(cuda.backend).toBe('cuda')
+    expect(VULKAN_READY_MS).toBeGreaterThanOrEqual(30_000)
+    expect(VULKAN_READY_MS).toBeLessThan(3 * 60 * 1000)
+    expect(VULKAN_FIRST_INFER_MS).toBeGreaterThanOrEqual(10_000)
+    expect(VULKAN_FIRST_INFER_MS).toBeLessThan(2 * 60 * 1000)
+    expect(vulkanSkipReason('ready', new Error('speech engine did not start in time'))).toBe('ready-timeout')
+    expect(vulkanSkipReason('ready', new Error('speech engine exited (1)'))).toBe('start-failed')
+    expect(vulkanSkipReason('transcribe', Object.assign(new Error('timed out'), { name: 'TimeoutError' }))).toBe('transcription-timeout')
+    expect(vulkanSkipReason('transcribe', new Error('HTTP 500'))).toBe('start-failed')
+    const raw = encodeVulkanAutoSkip('ready-timeout', '1.2.3', '2026-10-25T00:00:00.000Z')
+    expect(parseVulkanAutoSkip(raw)).toEqual({ reason: 'ready-timeout', version: '1.2.3', at: '2026-10-25T00:00:00.000Z' })
+    expect(vulkanAutoSkipReason(raw, '1.2.3')).toBe('ready-timeout')
+    expect(vulkanAutoSkipReason(raw, '1.2.4')).toBeNull()
+    expect(vulkanAutoSkipReason('{"reason":"ready-timeout","at":"2026-10-25T00:00:00.000Z"}', '1.2.3')).toBeNull()
+    expect(vulkanAutoSkipReason('{"reason":"nope","version":"1.2.3"}', '1.2.3')).toBeNull()
+    expect(vulkanAutoSkipReason('not json', '1.2.3')).toBeNull()
+  })
+  it('lets a packaged smoke test point at a small model and keeps release overrides strict', () => {
+    expect(modelOverridePath({ FLOWA_WHISPER_MODEL: '/tmp/ggml-tiny.en.bin' }, 'ggml-large-v3-turbo.bin')).toBe('')
+    expect(modelOverridePath({ FLOWA_WHISPER_MODEL: '/tmp/ggml-large-v3-turbo.bin' }, 'ggml-large-v3-turbo.bin')).toBe('/tmp/ggml-large-v3-turbo.bin')
+    expect(modelOverridePath({ FLOWA_PACKAGED_SMOKE: '1', FLOWA_WHISPER_MODEL: '/tmp/ggml-tiny.en.bin' }, 'ggml-large-v3-turbo.bin')).toBe('/tmp/ggml-tiny.en.bin')
+  })
+  it('remembers a Vulkan give-up for this version and drops it after an update', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'flowa-vulkan-skip-'))
+    const file = path.join(dir, 'vulkan-auto-skip.json')
+    expect(readVulkanAutoSkip(dir, '1.2.3')).toBeNull()
+    writeVulkanAutoSkip(dir, 'transcription-timeout', '1.2.3')
+    expect(readVulkanAutoSkip(dir, '1.2.3')).toBe('transcription-timeout')
+    expect(fs.existsSync(file)).toBe(true)
+    expect(readVulkanAutoSkip(dir, '1.2.4')).toBeNull()
+    expect(fs.existsSync(file)).toBe(false)
+    writeVulkanAutoSkip(dir, 'start-failed', '1.2.4')
+    expect(readVulkanAutoSkip(dir, '1.2.4')).toBe('start-failed')
+    clearVulkanAutoSkip(dir)
+    expect(readVulkanAutoSkip(dir, '1.2.4')).toBeNull()
+    fs.writeFileSync(file, '{"reason":"ready-timeout"}\n')
+    expect(readVulkanAutoSkip(dir, '1.2.4')).toBeNull()
+    expect(fs.existsSync(file)).toBe(false)
+    fs.rmSync(dir, { recursive: true, force: true })
   })
 })

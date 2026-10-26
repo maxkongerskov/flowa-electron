@@ -37,11 +37,10 @@ cross-platform Electron version.
 | OS | Architectures | Installer | Speech engine |
 |---|---|---|---|
 | macOS 12 or newer | Apple Silicon (arm64), Intel (x64) | `.dmg` (signed and notarized) | whisper.cpp with Metal on Apple Silicon |
-| Windows 10 / 11 | x64 | NSIS `.exe` (not Authenticode-signed) | whisper.cpp on the CPU |
-| Linux | x86_64 | `.AppImage` and `.deb` | whisper.cpp on the CPU (needs `libgomp1`) |
+| Windows 10 / 11 | x64 | NSIS `.exe` (not Authenticode-signed) | whisper.cpp on the CPU, or Vulkan when a real GPU is present |
+| Linux | x86_64 | `.AppImage` and `.deb` | whisper.cpp on the CPU, or Vulkan when a real GPU is present (needs `libgomp1`; Vulkan also uses `libvulkan1`) |
 
-Windows on Arm is not built. GPU acceleration on Windows and Linux (Vulkan, with automatic
-CPU fallback) is in progress.
+Windows on Arm is not built. On Windows and Linux, automatic mode uses the Vulkan engine when a real GPU is present and the CPU engine otherwise. Software Vulkan (lavapipe, llvmpipe, SwiftShader, Microsoft Basic Render, WARP) stays on the CPU. CUDA is not bundled.
 
 ### System requirements
 
@@ -52,7 +51,7 @@ so it needs a reasonably capable computer.
 |---|---|---|
 | RAM | 16 GB | 32 GB |
 | CPU | Modern 64-bit 4-core CPU (x64 needs AVX2, roughly 2013 or newer) | 8+ cores, or Apple Silicon |
-| GPU | Not required | Apple Silicon (Metal) |
+| GPU | Not required | Apple Silicon (Metal), or a Vulkan GPU on Windows or Linux |
 | Disk | 4 GB free | 8 GB free |
 
 ---
@@ -186,7 +185,7 @@ Optional whisper.cpp GPU variants (Windows / Linux):
 
 ```bash
 FLOWA_WHISPER_VARIANT=cuda   npm run setup:whisper   # whisper-server-cuda
-FLOWA_WHISPER_VARIANT=vulkan npm run setup:whisper   # whisper-server-vulkan (needs the Vulkan SDK)
+FLOWA_WHISPER_VARIANT=vulkan npm run setup:whisper   # whisper-server-vulkan/ (its own libraries; needs the Vulkan SDK)
 ```
 
 ### Tests and type checks

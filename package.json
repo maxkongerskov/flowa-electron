@@ -1,7 +1,7 @@
 {
   "name": "flowa",
   "productName": "Flowa",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "Local voice dictation for macOS, Windows and Linux. Press a key, speak, press it again. Your words appear wherever your cursor is.",
   "main": "out/main/index.js",
   "author": "Max Køngerskov",

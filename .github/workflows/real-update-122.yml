@@ -1,0 +1,47 @@
+# Install the published v1.2.2 artifacts and update them to this branch's 1.2.3.
+# The feed is local. The installed copy's app-update.yml is edited in the
+# test; shipped source is not. Mac arm64 and x64 are manual (RELEASING.md).
+name: Real 1.2.2 update
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux AppImage and deb
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Display, AppImage, and squashfs tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb libfuse2 squashfs-tools
+      - run: npm ci
+      - name: Update published 1.2.2 AppImage and deb
+        run: node scripts/real-update-122.mjs
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          REAL_UPDATE_TARGETS: appimage,deb
+
+  windows:
+    name: Windows NSIS
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Update published 1.2.2 NSIS
+        run: node scripts/real-update-122.mjs
+        env:
+          REAL_UPDATE_TARGETS: nsis

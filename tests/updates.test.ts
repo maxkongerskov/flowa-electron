@@ -54,12 +54,14 @@ describe('semver', () => {
 })
 
 describe('installer link', () => {
-  it('points at flowa-electron, not the homepage repo', () => {
+  it('points at flowa-electron', () => {
+    expect(UPDATE_REPOSITORY).toEqual({ owner: 'maxkongerskov', repo: 'flowa-electron' })
     expect(releasePageUrl('v1.3.0')).toBe('https://github.com/maxkongerskov/flowa-electron/releases/tag/v1.3.0')
     expect(assetDownloadUrl('1.3.0', 'Flowa-1.3.0-arm64.dmg')).toBe(
       'https://github.com/maxkongerskov/flowa-electron/releases/download/v1.3.0/Flowa-1.3.0-arm64.dmg'
     )
     expect(isFlowaReleaseUrl(releasePageUrl('1.3.0'))).toBe(true)
+    expect(isFlowaReleaseUrl('https://github.com/maxkongerskov/flowa-electron/releases/download/v1.2.3/Flowa-1.2.3.AppImage')).toBe(true)
     expect(isFlowaReleaseUrl('http://github.com/maxkongerskov/flowa-electron/releases/tag/v1.3.0')).toBe(false)
     expect(isFlowaReleaseUrl('https://github.com/maxkongerskov/Flowa/releases/tag/v1.3.0')).toBe(false)
     expect(isFlowaReleaseUrl('https://example.com')).toBe(false)
@@ -329,7 +331,9 @@ describe('electron-builder publish', () => {
     const yml = readFileSync(resolve(process.cwd(), 'electron-builder.yml'), 'utf8')
     expect(yml).toMatch(/provider:\s*github/)
     expect(yml).toContain(`owner: ${UPDATE_REPOSITORY.owner}`)
-    expect(yml).toContain(`repo: ${UPDATE_REPOSITORY.repo}`)
+    expect(yml).toContain('repo: flowa-electron')
     expect(yml).not.toContain('repo: Flowa')
+    const appUpdate = readFileSync(resolve(process.cwd(), 'scripts/app-update-yml.mjs'), 'utf8')
+    expect(appUpdate).toContain(`repo: '${UPDATE_REPOSITORY.repo}'`)
   })
 })
