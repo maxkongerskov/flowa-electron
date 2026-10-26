@@ -151,13 +151,20 @@ is not notarized.
 
 ### 5. Seed prefs and history
 
+Seed `"flowa.microphone": "default"`. Home resets a saved id that is not among
+the visible audio devices to `default` (the same code as in 1.2.2). A Mac has
+devices, so an invented id such as `bridge-mic-122` is rewritten on first
+paint and the assert fails even though the update kept the pref. CI runners
+enumerate no devices, so that rewrite never runs there. `default` is the
+value both places leave alone.
+
 ```bash
 DIR="$HOME/Library/Application Support/Flowa-Electron"
 mkdir -p "$DIR"
 cat > "$DIR/prefs.json" <<'EOF'
 {
   "flowa.language": "da",
-  "flowa.microphone": "bridge-mic-122",
+  "flowa.microphone": "default",
   "flowa.colorScheme.dark": true,
   "flowa.onboardingComplete": true,
   "flowa.firstRunComplete": true,
@@ -200,7 +207,7 @@ Pass means all of these are true:
 - `defaults read /Applications/Flowa.app/Contents/Info.plist CFBundleShortVersionString`
   prints `1.2.3`
 - `"$DIR/prefs.json"` still has `"flowa.language": "da"`,
-  `"flowa.microphone": "bridge-mic-122"`, and `"flowa.hardware": "gpu"`
+  `"flowa.microphone": "default"`, and `"flowa.hardware": "gpu"`
 - `"$DIR/recent.json"` still contains `bridge-history-1.2.2-token`
 
 ```bash
@@ -210,7 +217,7 @@ from pathlib import Path
 dir = Path.home() / "Library/Application Support/Flowa-Electron"
 prefs = json.loads((dir / "prefs.json").read_text())
 assert prefs["flowa.language"] == "da"
-assert prefs["flowa.microphone"] == "bridge-mic-122"
+assert prefs["flowa.microphone"] == "default"
 assert prefs["flowa.hardware"] == "gpu"
 recent = json.loads((dir / "recent.json").read_text())
 assert any(item.get("text") == "bridge-history-1.2.2-token" for item in recent)

@@ -33,7 +33,10 @@ const FROM_TAG = 'v1.2.2'
 const TO = '1.2.3'
 const RELEASE_BASE = `https://github.com/maxkongerskov/flowa-electron/releases/download/${FROM_TAG}`
 const HISTORY_TEXT = 'bridge-history-1.2.2-token'
-const MIC = 'bridge-mic-122'
+// Home rewrites a saved microphone id that is not a visible audio device to
+// "default". CI runners enumerate no devices, so an unknown id survives there
+// and is rewritten on a real Mac. Seed the sentinel the app already stores.
+const MIC = 'default'
 const LANG = 'da'
 
 const ASSETS = {
