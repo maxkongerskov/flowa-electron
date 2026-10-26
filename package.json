@@ -7,7 +7,14 @@
   "author": "Max Køngerskov",
   "license": "MIT",
   "private": true,
-  "homepage": "https://github.com/maxkongerskov/Flowa",
+  "homepage": "https://github.com/maxkongerskov/flowa-electron",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/maxkongerskov/flowa-electron.git"
+  },
+  "bugs": {
+    "url": "https://github.com/maxkongerskov/flowa-electron/issues"
+  },
   "scripts": {
     "dev": "electron-vite dev",
     "start": "electron-vite build && electron-vite preview",

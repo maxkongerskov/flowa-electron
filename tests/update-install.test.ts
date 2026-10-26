@@ -142,7 +142,8 @@ describe('e2e bundle identity', () => {
     expect(e2e).toContain(`appId: '${E2E_BUNDLE_ID}'`)
     expect(e2e).toContain(`productName: '${E2E_PRODUCT_NAME}'`)
     expect(e2e).toContain("packageName: 'flowa-e2e'")
-    expect(release).toContain(`appId: ${RELEASE_BUNDLE_ID}\n`)
+    // A Windows checkout uses CRLF. The id still has to be its own line.
+    expect(release.replace(/\r\n/g, '\n')).toContain(`appId: ${RELEASE_BUNDLE_ID}\n`)
     expect(release).not.toContain(E2E_BUNDLE_ID)
     expect(userDataFolderName(true)).toBe('Flowa-Electron-e2e')
     expect(userDataFolderName(false)).toBe('Flowa-Electron')

@@ -1,0 +1,78 @@
+# Typecheck, unit tests, and installer builds. Each installer must contain
+# LICENSE and THIRD_PARTY_NOTICES.md. Publish stays off: these are checks, not releases.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y 7zip squashfs-tools
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: Build AppImage and deb
+        run: npm run dist:linux -- --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - name: Verify notices inside the Linux installers
+        run: node scripts/verify-packaged-notices.mjs --dir release --require appimage,deb
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install 7-Zip
+        shell: pwsh
+        run: |
+          if (-not (Get-Command 7z -ErrorAction SilentlyContinue)) {
+            choco install 7zip --yes --no-progress
+            "C:\Program Files\7-Zip" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: Build NSIS installers
+        run: npm run dist:win -- --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - name: Verify notices inside the NSIS installers
+        run: node scripts/verify-packaged-notices.mjs --dir release --require nsis-x64,nsis-arm64
+
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: Build arm64 and x64 dmgs
+        run: npm run dist:mac -- --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - name: Verify notices inside the dmgs
+        run: node scripts/verify-packaged-notices.mjs --dir release --require dmg-arm64,dmg-x64
