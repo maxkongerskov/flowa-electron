@@ -22,6 +22,11 @@ extraResources:
     to: bin
   - from: resources/mac
     to: mac
+  # Shipped in every installer. Platform extraResources are appended to this list.
+  - from: LICENSE
+    to: LICENSE
+  - from: THIRD_PARTY_NOTICES.md
+    to: THIRD_PARTY_NOTICES.md
   # The 1.6 GB speech model is NOT bundled by default: the app finds it in
   # <appData>/Flowa-Electron/models/ (first-run download, or move models/*.bin there).
   # To ship it inside the installer instead, uncomment:
