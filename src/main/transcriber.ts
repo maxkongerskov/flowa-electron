@@ -39,6 +39,7 @@ import { prefs } from './store'
 import { run } from './proc'
 import { postMultipart, transcriptionTimeoutMs, wav16Seconds } from './localHttp'
 import { readWhisperManifest, resolveWhisperBin, whisperLibraryEnv } from './speechFiles'
+import type { SegmentReply, SegmentRequest } from './liveSession'
 import { clearVulkanAutoSkip, readVulkanAutoSkip, writeVulkanAutoSkip } from './vulkanSkip'
 
 const exe = (name: string): string => (process.platform === 'win32' ? `${name}.exe` : name)
@@ -494,7 +495,7 @@ export class Transcriber extends EventEmitter {
     return cleanTranscript(text)
   }
 
-  private async inferCli(wavFile: string, language: string | null): Promise<string> {
+  private async inferCli(wavFile: string, language: string | null, prompt?: string): Promise<string> {
     const kind = this.runtime?.whisperBinary ?? 'default'
     const bin = resolveWhisperBin(paths.binDir, this.whisperUseGpu ? kind : 'default', 'cli') ?? resolveBinary('whisper-cli')
     if (!bin || !this.modelPath) throw new Error('Speech engine isn\'t ready yet.')
@@ -505,7 +506,9 @@ export class Transcriber extends EventEmitter {
     } catch {
       /* missing file: whisper-cli reports it */
     }
-    const r = await run(bin, cliArgs(this.modelPath, wavFile, outBase, language, threads(), this.whisperUseGpu), {
+    const args = cliArgs(this.modelPath, wavFile, outBase, language, threads(), this.whisperUseGpu)
+    if (prompt) args.push('--prompt', prompt)
+    const r = await run(bin, args, {
       timeoutMs: transcriptionTimeoutMs(audioSeconds),
       cwd: path.dirname(bin),
       env: whisperLibraryEnv(bin)
@@ -545,6 +548,83 @@ export class Transcriber extends EventEmitter {
       this.lastDecodeErrorMessage = `Transcription failed: ${msg}`
       this.setStatus(this.isLoaded ? { kind: 'ready' } : { kind: 'error', message: this.lastDecodeErrorMessage })
       return null
+    }
+  }
+
+  /**
+   * Live transcription: one background segment. Does not touch `status`
+   * (no visible change while recording). A GPU failure mid-recording moves the
+   * resident server to CPU (same path as a failed GPU prewarm) and retries once.
+   */
+  async transcribeSegment(wav: Uint8Array, req: SegmentRequest): Promise<SegmentReply> {
+    await this.loadIfNeeded()
+    if (!this.isLoaded) throw new Error(this.status.kind === 'error' || this.status.kind === 'unavailable' ? this.status.message : "Speech engine isn't ready yet.")
+    try {
+      return await this.inferSegment(wav, req)
+    } catch (e) {
+      if (this.mode !== 'server' || !this.whisperUseGpu) throw e
+      await this.fallbackToCpuMidSession(e)
+      return await this.inferSegment(wav, req)
+    }
+  }
+
+  private cpuFallback: Promise<void> | null = null
+
+  private fallbackToCpuMidSession(cause: unknown): Promise<void> {
+    if (!this.cpuFallback) {
+      this.cpuFallback = (async () => {
+        const backend = this.runtime?.backend ?? 'cpu'
+        console.warn('[Flowa] GPU engine failed during live transcription, moving to CPU', cause instanceof Error ? cause.message : cause)
+        if (backend === 'vulkan') writeVulkanAutoSkip(paths.userData, vulkanSkipReason('transcribe', cause), app.getVersion())
+        this.noteGpuFallback(backend === 'cpu' ? 'gpu' : backend)
+        this.killServer()
+        this.whisperUseGpu = false
+        const model = this.modelPath
+        const cpuBin = resolveWhisperBin(paths.binDir, 'default', 'server') ?? resolveBinary('whisper-server')
+        if (!model || !cpuBin) {
+          this.isLoaded = false
+          throw new Error('CPU speech engine is missing.')
+        }
+        try {
+          await this.startServer(cpuBin, model, false, CPU_START_MS)
+          await this.inferServer(encodeWav16(new Float32Array(16_000)), 'en', CPU_PREWARM_MS)
+          this.mode = 'server'
+        } catch (e) {
+          this.killServer()
+          this.isLoaded = false
+          throw e
+        }
+      })().finally(() => {
+        this.cpuFallback = null
+      })
+    }
+    return this.cpuFallback
+  }
+
+  private async inferSegment(wav: Uint8Array, req: SegmentRequest): Promise<SegmentReply> {
+    if (this.cpuFallback) await this.cpuFallback
+    const timeoutMs = transcriptionTimeoutMs(wav16Seconds(wav.byteLength))
+    if (this.mode === 'server') {
+      const fields: Record<string, string> = { ...inferenceFields(req.language), prompt: req.prompt }
+      if (req.detectLanguage) fields.response_format = 'verbose_json'
+      const r = await postMultipart(this.port, '/inference', fields, { field: 'file', filename: 'audio.wav', contentType: 'audio/wav', data: wav }, timeoutMs)
+      if (r.status < 200 || r.status >= 300) throw new Error(`HTTP ${r.status}: ${r.body.slice(0, 200)}`)
+      let j: { text?: unknown; language?: unknown; error?: unknown }
+      try {
+        j = JSON.parse(r.body)
+      } catch {
+        return { text: r.body, language: null }
+      }
+      if (j.error) throw new Error(String(j.error))
+      return { text: String(j.text ?? ''), language: typeof j.language === 'string' && j.language ? j.language : null }
+    }
+    // whisper-cli fallback (no server binary): prompt yes, language lock no.
+    const file = path.join(os.tmpdir(), `flowa-seg-${process.pid}-${Date.now()}.wav`)
+    fs.writeFileSync(file, wav)
+    try {
+      return { text: await this.inferCli(file, req.language, req.prompt), language: null }
+    } finally {
+      fs.rmSync(file, { force: true })
     }
   }
 

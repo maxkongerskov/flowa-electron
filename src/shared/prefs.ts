@@ -115,5 +115,6 @@ export function coercePrefs(raw: unknown, platform: NodeJS.Platform | string): P
     [PrefKey.shortcut]: migratedShortcut(r[PrefKey.shortcut], hasOtherPrefs, platform),
     [PrefKey.hardware]: hardware,
     [PrefKey.speechModel]: speechModel
+    // Unknown keys (e.g. the retired 1.2.4-beta flag flowa.experimental.liveTranscription) are dropped here.
   }
 }

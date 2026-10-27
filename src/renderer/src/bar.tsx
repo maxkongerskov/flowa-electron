@@ -14,7 +14,8 @@ let currentGeneration = 0
 bar.onCaptureStart(async (id, req) => {
   currentGeneration = req.generation
   try {
-    await audio.start(req.deviceId, req.maxDurationSeconds)
+    const gen = req.generation
+    await audio.start(req.deviceId, req.maxDurationSeconds, req.stream ? (block) => bar.sendBlock(gen, block) : undefined)
     bar.reply(id, { ok: true })
   } catch (e) {
     bar.reply(id, { ok: false, message: e instanceof Error ? e.message : String(e) })
