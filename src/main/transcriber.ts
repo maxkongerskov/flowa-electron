@@ -37,6 +37,7 @@ import { probeGpu } from './gpuProbe'
 import { paths } from './paths'
 import { prefs } from './store'
 import { run } from './proc'
+import { postMultipart, transcriptionTimeoutMs, wav16Seconds } from './localHttp'
 import { readWhisperManifest, resolveWhisperBin, whisperLibraryEnv } from './speechFiles'
 import { clearVulkanAutoSkip, readVulkanAutoSkip, writeVulkanAutoSkip } from './vulkanSkip'
 
@@ -469,13 +470,18 @@ export class Transcriber extends EventEmitter {
     throw new Error('speech engine did not start in time')
   }
 
-  private async inferServer(wav: Uint8Array, language: string | null, timeoutMs = 10 * 60 * 1000): Promise<string> {
-    const form = new FormData()
-    form.append('file', new Blob([new Uint8Array(wav)], { type: 'audio/wav' }), 'audio.wav')
-    for (const [k, v] of Object.entries(inferenceFields(language))) form.append(k, v)
-    const r = await fetch(`http://127.0.0.1:${this.port}/inference`, { method: 'POST', body: form, signal: AbortSignal.timeout(timeoutMs) })
-    const body = await r.text()
-    if (!r.ok) throw new Error(`HTTP ${r.status}: ${body.slice(0, 200)}`)
+  private async inferServer(wav: Uint8Array, language: string | null, timeoutMs = transcriptionTimeoutMs(wav16Seconds(wav.byteLength))): Promise<string> {
+    // node:http, not fetch: undici's default 300 s headersTimeout would fail any
+    // transcription that takes longer than 5 min (see localHttp.ts).
+    const r = await postMultipart(
+      this.port,
+      '/inference',
+      inferenceFields(language),
+      { field: 'file', filename: 'audio.wav', contentType: 'audio/wav', data: wav },
+      timeoutMs
+    )
+    const body = r.body
+    if (r.status < 200 || r.status >= 300) throw new Error(`HTTP ${r.status}: ${body.slice(0, 200)}`)
     let text = ''
     try {
       const j = JSON.parse(body)
@@ -493,8 +499,14 @@ export class Transcriber extends EventEmitter {
     const bin = resolveWhisperBin(paths.binDir, this.whisperUseGpu ? kind : 'default', 'cli') ?? resolveBinary('whisper-cli')
     if (!bin || !this.modelPath) throw new Error('Speech engine isn\'t ready yet.')
     const outBase = path.join(os.tmpdir(), `flowa-whisper-${process.pid}-${Date.now()}`)
+    let audioSeconds = 0
+    try {
+      audioSeconds = wav16Seconds(fs.statSync(wavFile).size)
+    } catch {
+      /* missing file: whisper-cli reports it */
+    }
     const r = await run(bin, cliArgs(this.modelPath, wavFile, outBase, language, threads(), this.whisperUseGpu), {
-      timeoutMs: 10 * 60 * 1000,
+      timeoutMs: transcriptionTimeoutMs(audioSeconds),
       cwd: path.dirname(bin),
       env: whisperLibraryEnv(bin)
     })
