@@ -21,29 +21,24 @@ function mockServer(delayMs: number, onBody?: (req: http.IncomingMessage, body: 
   const pending = new Set<NodeJS.Timeout>()
   const srv = http.createServer((req, res) => {
     const chunks: Buffer[] = []
-    let timer: NodeJS.Timeout | undefined
-    const cancel = (): void => {
-      if (!timer) return
-      clearTimeout(timer)
-      pending.delete(timer)
-      timer = undefined
-    }
-    req.on('error', () => cancel())
-    req.on('aborted', () => cancel())
+    // Connection: close makes req.destroyed true as soon as the body ends.
+    // The response is still writable then; only res.destroyed means the client left.
+    res.on('error', () => {})
+    req.on('error', () => {})
     req.on('data', (c: Buffer) => chunks.push(c))
     req.on('end', () => {
       void Promise.resolve(onBody?.(req, Buffer.concat(chunks)))
         .then(() => {
-          timer = setTimeout(() => {
-            if (timer) pending.delete(timer)
-            if (req.destroyed || res.writableEnded) return
+          const timer = setTimeout(() => {
+            pending.delete(timer)
+            if (res.destroyed || res.writableEnded) return
             res.writeHead(200, { 'content-type': 'application/json' })
             res.end(JSON.stringify({ text: ' long dictation ' }))
           }, delayMs)
           pending.add(timer)
         })
         .catch(() => {
-          if (!res.writableEnded) {
+          if (!res.writableEnded && !res.destroyed) {
             res.writeHead(500)
             res.end()
           }
