@@ -393,10 +393,6 @@ async function main(): Promise<void> {
       case PrefKey.speechModel:
         if (isSpeechModelId(value)) prefs.set(key, value)
         break
-      case PrefKey.liveTranscription:
-        // Read at the next recording start; a running session keeps its mode.
-        if (typeof value === 'boolean') prefs.set(key, value)
-        break
     }
   })
 

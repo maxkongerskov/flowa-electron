@@ -1,4 +1,4 @@
-// Beta live transcription: join per-segment text into one transcript.
+// Live transcription: join per-segment text into one transcript.
 import { cleanTranscript } from './model'
 
 /** Last ~maxChars of text, starting on a word boundary (prompt for the next segment). */

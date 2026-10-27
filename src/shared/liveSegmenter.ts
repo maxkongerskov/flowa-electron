@@ -1,4 +1,4 @@
-// Beta live transcription: cut a running 16 kHz mono stream into segments.
+// Live transcription: cut a running 16 kHz mono stream into segments.
 //
 // Cut on a pause once a segment is >= 30 s (preferred window 30–60 s; after
 // 60 s a shorter pause is accepted). With no pause by 90 s: hard cut at 90 s and

@@ -1,4 +1,4 @@
-// Pipeline wiring for the beta flag: off = today's path, on = live session.
+// Pipeline wiring: live segmented transcription is the only dictation path.
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -35,6 +35,7 @@ vi.mock('../src/main/transcriber', () => ({
 }))
 
 import { DictationPipeline, type CaptureBridge } from '../src/main/pipeline'
+import { coercePrefs } from '@shared/prefs'
 import type { CaptureResult, CaptureStartRequest } from '@shared/types'
 
 const sr = 16_000
@@ -60,7 +61,7 @@ function bridge(samples: Float32Array) {
 const speech = (seconds: number): Float32Array => new Float32Array(seconds * sr).fill(0.2)
 
 beforeEach(() => {
-  h.prefs = { 'flowa.maxDurationMinutes': 60, 'flowa.language': 'en', 'flowa.experimental.liveTranscription': false }
+  h.prefs = { 'flowa.maxDurationMinutes': 60, 'flowa.language': 'en' }
   h.saved = []
   h.paste.mockReset().mockImplementation(async (_t: string, target: { name: string } | null) => (target ? { kind: 'pasted', appName: target.name } : { kind: 'clipboardOnly' }))
   h.captureTarget.mockReset().mockResolvedValue(stopTarget)
@@ -70,28 +71,20 @@ beforeEach(() => {
   h.dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flowa-livepipe-'))
 })
 
-describe('beta flag off (default) = today', () => {
-  it('buffers in the renderer, single-pass transcribe, pastes into the start target', async () => {
-    delete h.prefs['flowa.experimental.liveTranscription'] // missing pref = off
-    const cap = bridge(speech(3))
+describe('stale beta pref', () => {
+  it('a stored flowa.experimental.liveTranscription is dropped on load and does not change the path', async () => {
+    const loaded = coercePrefs({ 'flowa.experimental.liveTranscription': false, 'flowa.language': 'en' }, 'darwin') as unknown as Record<string, unknown>
+    expect('flowa.experimental.liveTranscription' in loaded).toBe(false)
+    expect(loaded['flowa.language']).toBe('en')
+    h.prefs['flowa.experimental.liveTranscription'] = false // even if a store still returned it
+    const cap = bridge(new Float32Array(0))
     const p = new DictationPipeline(cap)
     await p.start(Promise.resolve(startTarget), 'default')
-    expect(cap.starts[0]).toEqual({ deviceId: 'default', maxDurationSeconds: 3600, generation: 1 })
-    expect('stream' in cap.starts[0]).toBe(false)
-    await p.commit('en')
-    expect(h.transcribe).toHaveBeenCalledTimes(1)
-    expect(h.transcribeSegment).not.toHaveBeenCalled()
-    expect(h.captureTarget).not.toHaveBeenCalled()
-    expect(h.paste).toHaveBeenCalledWith('single pass text', startTarget)
-    expect(h.saved.at(-1)![0]).toMatchObject({ text: 'single pass text', targetAppName: 'Notes' })
-    expect(fs.readdirSync(h.dir)).toEqual([])
+    expect(cap.starts[0]).toEqual({ deviceId: 'default', maxDurationSeconds: 3600, generation: 1, stream: true })
   })
 })
 
-describe('beta flag on', () => {
-  beforeEach(() => {
-    h.prefs['flowa.experimental.liveTranscription'] = true
-  })
+describe('live dictation', () => {
 
   async function record(seconds: number) {
     const cap = bridge(new Float32Array(0)) // streaming: stop reply carries no samples
@@ -131,6 +124,46 @@ describe('beta flag on', () => {
     const kept = fs.readdirSync(h.dir)
     expect(kept).toHaveLength(1)
     expect(p.lastErrorMessage).toContain(kept[0])
+  })
+
+  it('short clip (3 s): one segment, clipboard + paste into focus at stop + Recent', async () => {
+    const { p } = await record(3)
+    await p.commit('en')
+    expect(h.transcribe).not.toHaveBeenCalled()
+    expect(h.transcribeSegment).toHaveBeenCalledTimes(1)
+    expect(h.paste).toHaveBeenCalledWith('part0', stopTarget)
+    expect(h.saved.at(-1)![0]).toMatchObject({ text: 'part0', targetAppName: 'Mail' })
+    expect(p.lastErrorMessage).toBeNull()
+    expect(fs.readdirSync(h.dir)).toEqual([])
+  })
+
+  it('very short clip (<2 s) still transcribes as one segment', async () => {
+    const cap = bridge(new Float32Array(0))
+    const p = new DictationPipeline(cap)
+    await p.start(Promise.resolve(startTarget), 'default')
+    cap.onBlock!(1, new Float32Array(sr * 1.2).fill(0.2))
+    await p.commit('en')
+    expect(h.transcribeSegment).toHaveBeenCalledTimes(1)
+    expect(h.paste).toHaveBeenCalledWith('part0', stopTarget)
+  })
+
+  it('max duration 0 = no limit; non-zero is passed to capture', async () => {
+    h.prefs['flowa.maxDurationMinutes'] = 0
+    const cap = bridge(new Float32Array(0))
+    await new DictationPipeline(cap).start(Promise.resolve(startTarget), 'default')
+    expect(cap.starts[0].maxDurationSeconds).toBeNull()
+  })
+
+  it('silent take: no transcription, no paste, spill deleted', async () => {
+    const cap = bridge(new Float32Array(0))
+    cap.stop = async (generation) => ({ generation, samples: new Float32Array(0), peak: 0, deviceKind: 'standard', stoppedForMaxDuration: false })
+    const p = new DictationPipeline(cap)
+    await p.start(Promise.resolve(startTarget), 'default')
+    cap.onBlock!(1, new Float32Array(sr * 3))
+    await p.commit('en')
+    expect(h.transcribeSegment).not.toHaveBeenCalled()
+    expect(h.paste).not.toHaveBeenCalled()
+    expect(fs.readdirSync(h.dir)).toEqual([])
   })
 
   it('cancel deletes the spill and pastes nothing', async () => {

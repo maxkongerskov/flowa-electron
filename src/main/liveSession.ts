@@ -1,4 +1,4 @@
-// Beta live transcription (flowa.experimental.liveTranscription).
+// Live transcription (the only dictation path).
 //
 // While recording: 1 s audio blocks from the Flow Bar are appended to a spill
 // WAV on disk (memory stays constant), cut into 30–90 s segments by

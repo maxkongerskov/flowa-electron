@@ -552,7 +552,7 @@ export class Transcriber extends EventEmitter {
   }
 
   /**
-   * Beta live transcription: one background segment. Does not touch `status`
+   * Live transcription: one background segment. Does not touch `status`
    * (no visible change while recording). A GPU failure mid-recording moves the
    * resident server to CPU (same path as a failed GPU prewarm) and retries once.
    */

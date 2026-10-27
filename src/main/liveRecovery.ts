@@ -1,4 +1,4 @@
-// Beta live transcription: where spill WAVs live, and how many failed ones we keep.
+// Live transcription: where spill WAVs live, and how many failed ones we keep.
 import fs from 'node:fs'
 import path from 'node:path'
 import { paths } from './paths'

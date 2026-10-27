@@ -31,7 +31,7 @@ export class AudioCapture {
   private opening = false
   private maxTimer: ReturnType<typeof setTimeout> | null = null
   private listeners = new Set<LevelListener>()
-  /** Beta live transcription: receives ~1 s blocks instead of buffering the take. */
+  /** Live transcription: receives ~1 s blocks instead of buffering the take. */
   private streamSink: ((block: Float32Array) => void) | null = null
   private pendingBlock: Float32Array[] = []
   private pendingLen = 0

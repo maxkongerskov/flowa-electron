@@ -1,6 +1,6 @@
 // Port of Flowa/Sections/HomeView.swift — settings + recent dictations.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AudioWaveform, ChevronDown, ChevronRight, CircleX, Command, Cpu, FlaskConical, Globe, Info, Layers, Mic, Power, RefreshCw, Search, Timer } from 'lucide-react'
+import { AudioWaveform, ChevronDown, ChevronRight, CircleX, Command, Cpu, Globe, Info, Layers, Mic, Power, RefreshCw, Search, Timer } from 'lucide-react'
 import type { AppState } from '@shared/types'
 import { languageDisplayName } from '@shared/languages'
 import { inputsForPicker, type AudioInputDevice } from '@shared/micDeviceKind'
@@ -215,16 +215,6 @@ export function HomeView({ state: s }: { state: AppState }) {
             <div className="hairline" />
             <Row icon={Power} label="Launch at login">
               <button className={`switch${s.launchAtLogin ? ' on' : ''}`} role="switch" aria-checked={s.launchAtLogin} onClick={() => void f.action('setLaunchAtLogin', !s.launchAtLogin)} />
-            </Row>
-            <div className="hairline" />
-            <Row icon={FlaskConical} label="Live transcription (Beta)">
-              <button
-                className={`switch${p['flowa.experimental.liveTranscription'] ? ' on' : ''}`}
-                role="switch"
-                aria-checked={p['flowa.experimental.liveTranscription']}
-                aria-label="Live transcription (Beta)"
-                onClick={() => void f.setPref('flowa.experimental.liveTranscription', !p['flowa.experimental.liveTranscription'])}
-              />
             </Row>
             <div className="hairline" />
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, minHeight: 44, padding: '4px 0' }}>

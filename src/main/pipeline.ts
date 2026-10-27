@@ -7,13 +7,12 @@
 
 import { EventEmitter } from 'node:events'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import type { CaptureResult, CaptureStartRequest } from '@shared/types'
 import { insertingRecent, newDictation, recentLimit, type Dictation } from '@shared/recent'
 import { appearsSilent } from '@shared/audioMath'
-import { decodeWav16, encodeWav16 } from '@shared/wav'
+import { decodeWav16 } from '@shared/wav'
 import { machineNoun, maxDurationStoppedMessage, modelNotReadyMessage, silenceMessage } from '@shared/status'
 import { languageForWhisper, maxDurationSeconds, PrefKey } from '@shared/prefs'
 import { Transcriber } from './transcriber'
@@ -38,11 +37,11 @@ export interface CaptureBridge {
   start(req: CaptureStartRequest): Promise<{ ok: true } | { ok: false; message: string }>
   stop(generation: number): Promise<CaptureResult>
   cancel(generation: number): void
-  /** Beta live transcription: ~1 s blocks while `stream` is on. */
+  /** Live transcription: ~1 s audio blocks for the current recording. */
   onBlock?: ((generation: number, samples: Float32Array) => void) | null
 }
 
-/** Banner text for a paste outcome (same strings for both paths). */
+/** Banner text for a paste outcome. */
 export function pasteOutcomeMessage(outcome: PasteOutcome, target: TargetApp | null, platform: string = process.platform): string | null {
   if (outcome.kind === 'accessibilityMissing') {
     return platform === 'linux'
@@ -73,7 +72,7 @@ export class DictationPipeline extends EventEmitter {
   private sessionTarget: Promise<TargetApp | null> | null = null
   private generation = 0
   private queue: Promise<void> = Promise.resolve()
-  /** Beta live transcription session for the current recording (flag on only). */
+  /** Live transcription session for the current recording. */
   private live: { generation: number; session: LiveSession } | null = null
 
   constructor(private capture: CaptureBridge) {
@@ -132,19 +131,11 @@ export class DictationPipeline extends EventEmitter {
       maxDurationSeconds: maxDurationSeconds(prefs.get(PrefKey.maxDurationMinutes)),
       generation: this.generation
     }
-    if (prefs.get(PrefKey.liveTranscription) === true && !debugFixturePath()) {
-      pruneRecovery(liveRecoveryDir(), null)
-      // Beta: flag is read once per recording. Off = the request above, unchanged.
-      req.stream = true
-      this.live = {
-        generation: this.generation,
-        session: new LiveSession({
-          engine: this.transcriber,
-          spillPath: path.join(liveRecoveryDir(), `flowa-live-${crypto.randomUUID().slice(0, 8)}.wav`),
-          language: languageForWhisper(prefs.get(PrefKey.language))
-        })
-      }
-    }
+    // Live transcription is the only dictation path: 1 s blocks stream to a spill
+    // WAV and are transcribed in 30–90 s segments in the background.
+    pruneRecovery(liveRecoveryDir(), null)
+    req.stream = true
+    this.live = { generation: this.generation, session: this.newSession() }
     const res = await this.capture.start(req)
     if (!res.ok) {
       this.discardLive()
@@ -157,50 +148,24 @@ export class DictationPipeline extends EventEmitter {
     return true
   }
 
-  /** Stop audio, snapshot the session target, and transcribe (language null = auto-detect). */
-  async commit(language: string | null): Promise<void> {
+  /**
+   * Stop audio and deliver the live transcript. The language was fixed when the
+   * recording started (same pref the hotkey passes here), so the argument is unused.
+   */
+  async commit(_language?: string | null): Promise<void> {
     const gen = this.generation
-    if (this.live && this.live.generation === gen) return this.commitLive()
-    const maxMinutes = prefs.get(PrefKey.maxDurationMinutes)
-    let result = await this.capture.stop(gen)
-    const fixture = debugFixturePath()
-    if (fixture) {
-      // E2E debug path: replace the mic take with a known WAV (paste path unchanged).
-      const wav = decodeWav16(new Uint8Array(fs.readFileSync(fixture)))
-      result = { ...result, samples: wav.samples, peak: 1 }
-      console.log(`[Flowa][debug] using fixture ${fixture} (${wav.samples.length} samples)`)
-    }
-    const target = this.sessionTarget
-    this.sessionTarget = null
-
-    if (result.samples.length === 0) {
-      if (appearsSilent(result.peak)) this.setError(silenceMessage(result.deviceKind))
+    if (!this.live || this.live.generation !== gen) {
+      // Nothing recording for this generation (e.g. start failed): just stop audio.
+      await this.capture.stop(gen)
+      this.sessionTarget = null
       return
     }
-    // Near-silent take: skip Whisper and surface a clear tip.
-    if (appearsSilent(result.peak)) {
-      console.log(`[Flowa] commit skipped — silent take peak=${result.peak} kind=${result.deviceKind}`)
-      this.setError(silenceMessage(result.deviceKind))
-      return
-    }
-
-    const wavPath = path.join(os.tmpdir(), `flowa-${crypto.randomUUID().slice(0, 8)}.wav`)
-    fs.writeFileSync(wavPath, encodeWav16(result.samples))
-
-    // Single-flight queue. A thrown job is logged and does not poison the chain.
-    this.queue = continueQueue(
-      this.queue,
-      () => this.runTranscription(wavPath, target, language, result.stoppedForMaxDuration, maxMinutes),
-      (err) => {
-        console.error('[Flowa] transcription queue failed', err instanceof Error ? err.message : err)
-      }
-    )
-    await this.queue
+    return this.commitLive()
   }
 
   /** The Flow Bar renderer died. Drop the session and say so. The microphone message is a different failure. */
   abortBarCrash(): void {
-    // Live beta: keep what was already transcribed (history + clipboard, no paste).
+    // Keep what was already transcribed (history + clipboard, no paste).
     if (this.live) {
       const { session } = this.live
       this.live = null
@@ -217,21 +182,39 @@ export class DictationPipeline extends EventEmitter {
     this.discardLive()
   }
 
+  private newSession(): LiveSession {
+    return new LiveSession({
+      engine: this.transcriber,
+      spillPath: path.join(liveRecoveryDir(), `flowa-live-${crypto.randomUUID().slice(0, 8)}.wav`),
+      language: languageForWhisper(prefs.get(PrefKey.language))
+    })
+  }
+
   private discardLive(): void {
     if (!this.live) return
     this.live.session.discard()
     this.live = null
   }
 
-  /** Beta live path: the stop reply arrives after the last block; only the last segment remains. */
+  /** The stop reply arrives after the last block; only the last segment remains. */
   private async commitLive(): Promise<void> {
     const gen = this.generation
     const live = this.live!
     this.live = null
     // Paste into whatever has focus at stop time (not the app from the start).
     const targetAtStop = captureTarget()
-    const result = await this.capture.stop(gen)
+    let result = await this.capture.stop(gen)
     this.sessionTarget = null
+    const fixture = debugFixturePath()
+    if (fixture) {
+      // E2E debug path: replace the mic take with a known WAV (paste path unchanged).
+      const wav = decodeWav16(new Uint8Array(fs.readFileSync(fixture)))
+      live.session.discard()
+      live.session = this.newSession()
+      for (let i = 0; i < wav.samples.length; i += 16_000) live.session.pushBlock(wav.samples.subarray(i, i + 16_000))
+      result = { ...result, peak: 1 }
+      console.log(`[Flowa][debug] using fixture ${fixture} (${wav.samples.length} samples)`)
+    }
     if (appearsSilent(result.peak) || live.session.samples === 0) {
       live.session.discard()
       if (appearsSilent(result.peak)) {
@@ -259,6 +242,13 @@ export class DictationPipeline extends EventEmitter {
     this.isTranscribing = true
     this.changed()
     try {
+      if (this.transcriber.status.kind === 'unavailable') {
+        // Same as before: no model → open the main window, nothing to deliver.
+        session.discard()
+        this.emit('showMainWindow')
+        console.log('[Flowa] transcription skipped — speech model unavailable')
+        return
+      }
       const started = Date.now()
       const r = await session.finish()
       const target = await targetPromise
@@ -274,6 +264,7 @@ export class DictationPipeline extends EventEmitter {
         this.recent = insertingRecent(entry, this.recent, recentLimit)
         saveRecent(this.recent)
       }
+      if (!r.text && !r.complete && this.transcriber.needsSetup) this.emit('showMainWindow')
       if (!r.complete) {
         pruneRecovery(liveRecoveryDir(), r.audioPath)
         this.lastErrorMessage = partialMessage(r)
@@ -283,62 +274,6 @@ export class DictationPipeline extends EventEmitter {
         this.lastErrorMessage = maxDurationStoppedMessage(maxMinutes)
       }
     } finally {
-      this.isTranscribing = false
-      this.changed()
-    }
-  }
-
-  private async runTranscription(
-    wavPath: string,
-    targetPromise: Promise<TargetApp | null> | null,
-    language: string | null,
-    hitMax: boolean,
-    maxMinutes: number
-  ): Promise<void> {
-    this.isTranscribing = true
-    this.changed()
-    try {
-      await this.transcriber.loadIfNeeded()
-      const started = Date.now()
-      const text = await this.transcriber.transcribe(wavPath, language)
-      if (!text) {
-        if (this.transcriber.status.kind === 'unavailable') {
-          this.emit('showMainWindow')
-          console.log('[Flowa] transcription skipped — speech model unavailable')
-          return
-        }
-        if (this.transcriber.lastDecodeErrorMessage) this.lastErrorMessage = this.transcriber.lastDecodeErrorMessage
-        else if (this.transcriber.status.kind === 'error') this.lastErrorMessage = this.transcriber.status.message
-        else this.lastErrorMessage = "Couldn't understand that audio. Try speaking more clearly or check the microphone."
-        if (this.transcriber.needsSetup) this.emit('showMainWindow')
-        console.log('[Flowa] transcription produced no text')
-        return
-      }
-      const elapsed = ((Date.now() - started) / 1000).toFixed(2)
-      const target = targetPromise ? await targetPromise : null
-      const outcome = await paste(text, target)
-      if (outcome.kind === 'accessibilityMissing') {
-        if (!this.lastErrorMessage) {
-          this.lastErrorMessage =
-            process.platform === 'linux'
-              ? 'Transcript is on the clipboard (install xdotool or wtype for auto-paste).'
-              : 'Transcript is on the clipboard (Accessibility is off for auto-paste).'
-        }
-      } else if (outcome.kind === 'clipboardOnly' && outcome.reason === 'targetNotFrontmost') {
-        this.lastErrorMessage = `Transcript is on the clipboard — ${target?.name ?? 'the target app'} wasn't in front, so Flowa didn't paste.`
-      } else if (outcome.kind === 'clipboardOnly' && outcome.reason === 'pasteFailed') {
-        this.lastErrorMessage = 'Transcript is on the clipboard — auto-paste failed. Press ⌘V to paste.'
-      } else if (outcome.kind === 'failed') {
-        this.lastErrorMessage = "Couldn't copy the transcript to the clipboard."
-      }
-      console.log(`[Flowa] ✓ transcribed in ${elapsed}s → ${target?.name ?? '<clipboard only>'} outcome=${outcome.kind}`)
-
-      const entry = newDictation(text, target?.name ?? null, new Date())
-      this.recent = insertingRecent(entry, this.recent, recentLimit)
-      saveRecent(this.recent)
-      if (hitMax) this.lastErrorMessage = maxDurationStoppedMessage(maxMinutes)
-    } finally {
-      fs.rmSync(wavPath, { force: true })
       this.isTranscribing = false
       this.changed()
     }
