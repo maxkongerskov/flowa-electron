@@ -749,15 +749,20 @@ function ensureLongSpeechWav(work) {
   return dest
 }
 
-function pinToOneCpu(pid) {
+function pinDictationCpus(pid) {
   if (process.platform !== 'win32' || !pid) return
+  // One logical CPU did not finish 8 minutes of Turbo inside the client's
+  // 10 min + 2× clip deadline (still running at 1560s). Two CPUs keep the
+  // decode slower than the published 300s headers timeout.
+  const mask = 3
   const result = spawnSync('powershell.exe', [
     '-NoProfile',
     '-Command',
-    `(Get-Process -Id ${Number(pid)} -ErrorAction Stop).ProcessorAffinity = [IntPtr]1`
+    `(Get-Process -Id ${Number(pid)} -ErrorAction Stop).ProcessorAffinity = [IntPtr]${mask}`
   ], { encoding: 'utf8' })
-  if (result.status !== 0) console.warn(`could not pin pid ${pid} to one CPU: ${String(result.stderr || result.stdout).trim()}`)
-  else console.log(`pinned pid ${pid} to one CPU`)
+  const host = `logicalCpus=${os.cpus().length}`
+  if (result.status !== 0) console.warn(`could not pin pid ${pid} to two CPUs (${host}): ${String(result.stderr || result.stdout).trim()}`)
+  else console.log(`pinned pid ${pid} to CPUs 0-1 (${host})`)
 }
 
 function snapshotEngine(resources, cache) {
@@ -812,7 +817,7 @@ async function runPackagedDictation({ exe, work, wav, label, slow }) {
   killProduct()
   console.log(`▶ long dictation ${label}: ${exe}`)
   const state = spawnLogged(exe, ['--no-sandbox'], env, logFile)
-  pinToOneCpu(state.child.pid)
+  pinDictationCpus(state.child.pid)
   const timeoutMs = slow ? 35 * 60 * 1000 : 20 * 60 * 1000
   try {
     await waitForLines(logFile, ['[selftest] transcript'], timeoutMs)
@@ -885,6 +890,9 @@ async function runNsis(work, built) {
     if (problems.length === 0) console.log('long-dictation\tpass')
     else {
       for (const problem of problems) console.log(`long-dictation\tfail\t${problem}`)
+      for (const label of ['published-1.2.3', 'pr7-1.2.4']) {
+        console.log(`long-dictation ${label} log tail:\n${readLog(path.join(work, `dictation-${label}.log`)).slice(-2500)}`)
+      }
       throw new Error(`long dictation proof failed\n${problems.join('\n')}`)
     }
   } finally {
