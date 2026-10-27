@@ -18,37 +18,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  linux:
-    name: Linux AppImage and deb
+  skipped:
+    name: Rehearsal skipped by owner
     runs-on: ubuntu-22.04
-    timeout-minutes: 150
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - name: Display, AppImage, and squashfs tools
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb libfuse2 squashfs-tools
-      - run: npm ci
-      - name: Update published 1.2.3 AppImage and deb
-        run: node scripts/real-update-pr7.mjs
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: "1"
-          REAL_UPDATE_TARGETS: appimage,deb
-
-  windows:
-    name: Windows NSIS and long dictation
-    runs-on: windows-latest
-    timeout-minutes: 180
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - name: Update published 1.2.3 NSIS and transcribe for 8 minutes
-        run: node scripts/real-update-pr7.mjs
-        env:
-          REAL_UPDATE_TARGETS: nsis
+      - name: Owner stopped the real-update rehearsal
+        run: echo "Real 1.2.3 to PR7 update was stopped before completion. No installers were updated."
