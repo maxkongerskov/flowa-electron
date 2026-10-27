@@ -3,10 +3,16 @@
 //
 //   FLOWA_SELFTEST=capture             record 3 s from the default mic, log stats
 //   FLOWA_SELFTEST=transcribe:<file>   transcribe a 16 kHz WAV via the engine, log text
+//   FLOWA_SELFTEST=live:<file>         run that WAV through the live segmenter, log text
 //   FLOWA_SELFTEST_QUIT=1              quit when the self-test finishes
 
+import fs from 'node:fs'
+import path from 'node:path'
 import { app } from 'electron'
+import { decodeWav16 } from '@shared/wav'
 import type { DictationPipeline, CaptureBridge } from './pipeline'
+import { LiveSession } from './liveSession'
+import { liveRecoveryDir } from './liveRecovery'
 
 export async function runSelfTest(pipeline: DictationPipeline, capture: CaptureBridge): Promise<void> {
   const spec = process.env.FLOWA_SELFTEST
@@ -39,6 +45,24 @@ export async function runSelfTest(pipeline: DictationPipeline, capture: CaptureB
       const text = await t.transcribe(file, lang)
       console.log(`[selftest] transcript (${((Date.now() - t0) / 1000).toFixed(2)}s, lang=${lang ?? 'auto'}): ${JSON.stringify(text)}`)
       if (!text) console.log(`[selftest] decode error: ${t.lastDecodeErrorMessage ?? '-'}`)
+    } else if (spec.startsWith('live:')) {
+      const file = spec.slice('live:'.length)
+      const t = pipeline.transcriber
+      await t.loadIfNeeded()
+      const wav = decodeWav16(new Uint8Array(fs.readFileSync(file)))
+      const session = new LiveSession({
+        engine: t,
+        spillPath: path.join(liveRecoveryDir(), 'selftest-live.wav'),
+        language: process.env.FLOWA_SELFTEST_LANG || 'en'
+      })
+      const t0 = Date.now()
+      const block = 16_000
+      for (let i = 0; i < wav.samples.length; i += block) {
+        session.pushBlock(wav.samples.subarray(i, Math.min(wav.samples.length, i + block)))
+      }
+      const result = await session.finish()
+      console.log(`[selftest] live transcript (${((Date.now() - t0) / 1000).toFixed(2)}s, segments=${result.segments}, complete=${result.complete}): ${JSON.stringify(result.text)}`)
+      if (!result.complete || !result.text) console.log(`[selftest] decode error: ${t.lastDecodeErrorMessage ?? 'live transcription incomplete'}`)
     }
   } catch (err) {
     console.log(`[selftest] FAILED: ${(err as Error).stack ?? err}`)
