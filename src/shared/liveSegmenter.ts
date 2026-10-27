@@ -39,7 +39,7 @@ export interface SegmentRange {
 
 const absFloor = 0.002
 const relThreshold = 0.15
-const maxThreshold = 0.03
+const maxThreshold = 0.02
 
 export class Segmenter {
   readonly opts: SegmenterOptions
@@ -58,8 +58,9 @@ export class Segmenter {
   constructor(opts: Partial<SegmenterOptions> = {}) {
     this.opts = { ...defaultSegmenterOptions, ...opts }
     this.frameLen = Math.max(1, Math.round((this.opts.sampleRate * this.opts.frameMs) / 1000))
-    // speech level halves in ~20 s of quiet
-    this.decay = Math.pow(0.5, this.opts.frameMs / 20_000)
+    // speech level halves in ~3 s, so quiet speech after a loud stretch is not
+    // mistaken for a pause (a 20 s half-life cut mid-sentence in quiet takes)
+    this.decay = Math.pow(0.5, this.opts.frameMs / 3_000)
   }
 
   get samplesSeen(): number {

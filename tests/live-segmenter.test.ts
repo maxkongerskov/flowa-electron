@@ -75,6 +75,18 @@ describe('live segmenter', () => {
     expect(seg.flush()).toBeNull()
   })
 
+  it('quiet speech after loud speech is not taken for a pause', () => {
+    // loud 10 s, then a quiet speaker (rms ~0.011, like a far-away laptop mic) with one real pause at 40 s
+    const n = 70 * sr
+    const a = new Float32Array(n)
+    for (let i = 0; i < n; i++) a[i] = rnd() * (i < 10 * sr ? 0.3 : 0.019)
+    a.fill(0, 40 * sr, 40.5 * sr)
+    const segs = feed(new Segmenter(), a)
+    expect(segs[0].cut).toBe('silence')
+    expect(segs[0].end).toBeGreaterThanOrEqual(40 * sr)
+    expect(segs[0].end).toBeLessThanOrEqual(40.5 * sr)
+  })
+
   it('does not depend on block size', () => {
     const audio = talk(Array.from({ length: 20 }, () => [7, 0.5] as [number, number]))
     const a = feed(new Segmenter(), audio, 16_000).map((s) => s.end)
