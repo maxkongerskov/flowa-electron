@@ -70,6 +70,7 @@ export class FlowBar implements FlowBarPanel, CaptureBridge {
   onCancel: () => void = () => {}
   onCommit: () => void = () => {}
   onCrashed: () => void = () => {}
+  onBlock: ((generation: number, samples: Float32Array) => void) | null = null
 
   constructor() {
     const mac = process.platform === 'darwin'
@@ -118,6 +119,11 @@ export class FlowBar implements FlowBarPanel, CaptureBridge {
         this.pending.delete(id)
         pending.resolve(value)
       }
+    })
+    ipcMain.on('capture:block', (e, generation: unknown, samples: unknown) => {
+      if (e.sender !== this.win.webContents || typeof generation !== 'number' || !this.onBlock) return
+      const block = samples instanceof Float32Array ? samples : new Float32Array(samples as ArrayLike<number>)
+      this.onBlock(generation, block)
     })
     ipcMain.on('bar:cancel', (e) => e.sender === this.win.webContents && this.onCancel())
     ipcMain.on('bar:commit', (e) => e.sender === this.win.webContents && this.onCommit())

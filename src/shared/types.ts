@@ -94,6 +94,8 @@ export interface CaptureStartRequest {
   deviceId: string
   maxDurationSeconds: number | null
   generation: number
+  /** Beta live transcription: send 1 s blocks over capture:block instead of buffering. */
+  stream?: boolean
 }
 
 export interface CaptureResult {

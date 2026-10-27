@@ -31,6 +31,10 @@ export class AudioCapture {
   private opening = false
   private maxTimer: ReturnType<typeof setTimeout> | null = null
   private listeners = new Set<LevelListener>()
+  /** Beta live transcription: receives ~1 s blocks instead of buffering the take. */
+  private streamSink: ((block: Float32Array) => void) | null = null
+  private pendingBlock: Float32Array[] = []
+  private pendingLen = 0
 
   onLevel(l: LevelListener): () => void {
     this.listeners.add(l)
@@ -42,10 +46,13 @@ export class AudioCapture {
   }
 
   /** Start capture. deviceId 'default' / '' = system input. */
-  async start(deviceId: string, maxDurationSeconds: number | null): Promise<void> {
+  async start(deviceId: string, maxDurationSeconds: number | null, streamSink?: (block: Float32Array) => void): Promise<void> {
     if (this.isRecording || this.opening) throw new Error('Already recording')
     this.opening = true
     this.chunks = []
+    this.streamSink = streamSink ?? null
+    this.pendingBlock = []
+    this.pendingLen = 0
     this.sessionPeakLevel = 0
     this.sessionDeviceKind = 'standard'
     this.stoppedForMaxDuration = false
@@ -113,7 +120,13 @@ export class AudioCapture {
       if (generation !== this.activeGeneration || !this.isRecording || this.stoppedForMaxDuration) return
       const input = ev.inputBuffer.getChannelData(0)
       const samples = resample(new Float32Array(input), rate, targetSampleRate)
-      this.chunks.push(samples)
+      if (this.streamSink) {
+        this.pendingBlock.push(samples)
+        this.pendingLen += samples.length
+        if (this.pendingLen >= targetSampleRate) this.flushBlock()
+      } else {
+        this.chunks.push(samples)
+      }
       const newLevel = levelForBuffer(samples)
       this.level = smoothLevel(this.level, newLevel)
       if (newLevel > this.sessionPeakLevel) this.sessionPeakLevel = newLevel
@@ -135,11 +148,17 @@ export class AudioCapture {
     }
   }
 
-  /** Stop and return 16 kHz mono samples (empty if nothing captured). */
+  /** Stop and return 16 kHz mono samples (empty if nothing captured, or when streaming). */
   stop(): Float32Array {
     if (!this.isRecording) return new Float32Array(0)
     this.endCaptureHardware()
     this.activeGeneration = 0
+    if (this.streamSink) {
+      // last partial block goes out before the stop reply (same IPC pipe, in order)
+      this.flushBlock()
+      this.streamSink = null
+      return new Float32Array(0)
+    }
     const total = this.chunks.reduce((n, c) => n + c.length, 0)
     const out = new Float32Array(total)
     let off = 0
@@ -158,6 +177,22 @@ export class AudioCapture {
     this.opening = false
     this.endCaptureHardware()
     this.chunks = []
+    this.streamSink = null
+    this.pendingBlock = []
+    this.pendingLen = 0
+  }
+
+  private flushBlock(): void {
+    if (!this.streamSink || this.pendingLen === 0) return
+    const out = new Float32Array(this.pendingLen)
+    let off = 0
+    for (const c of this.pendingBlock) {
+      out.set(c, off)
+      off += c.length
+    }
+    this.pendingBlock = []
+    this.pendingLen = 0
+    this.streamSink(out)
   }
 
   private endCaptureHardware(): void {

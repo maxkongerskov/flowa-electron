@@ -14,6 +14,7 @@ const api = {
   onVisible: (cb: Handler<boolean>) => on('bar:visible', cb),
   reply: (id: number, value: { ok: true } | { ok: false; message: string } | CaptureResult) =>
     ipcRenderer.send('bar:reply', id, value),
+  sendBlock: (generation: number, samples: Float32Array) => ipcRenderer.send('capture:block', generation, samples),
   cancel: () => ipcRenderer.send('bar:cancel'),
   commit: () => ipcRenderer.send('bar:commit'),
   getState: (): Promise<AppState | null> => ipcRenderer.invoke('bar:state')

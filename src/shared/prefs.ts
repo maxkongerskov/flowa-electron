@@ -20,7 +20,9 @@ export const PrefKey = {
   /** `gpu` (automatic Metal / CUDA / Vulkan), an explicit backend, or `cpu`. */
   hardware: 'flowa.hardware',
   /** `whisper-turbo` (default) or `whisper-small`. A saved Parakeet id falls back to Turbo. */
-  speechModel: 'flowa.speechModel'
+  speechModel: 'flowa.speechModel',
+  /** Beta: transcribe 30–90 s segments in the background while recording. Off by default. */
+  liveTranscription: 'flowa.experimental.liveTranscription'
 } as const
 
 export interface Prefs {
@@ -33,6 +35,7 @@ export interface Prefs {
   [PrefKey.shortcut]: string
   [PrefKey.hardware]: HardwarePref
   [PrefKey.speechModel]: SpeechModelId
+  [PrefKey.liveTranscription]: boolean
 }
 
 /** Recommended hard limit for stability (minutes). Used as the default. */
@@ -48,6 +51,7 @@ export function defaultPrefs(platform: NodeJS.Platform | string): Prefs {
     [PrefKey.maxDurationMinutes]: recommendedMaxDurationMinutes,
     [PrefKey.shortcut]: defaultShortcut(platform),
     [PrefKey.hardware]: 'gpu',
+    [PrefKey.liveTranscription]: false,
     [PrefKey.speechModel]: whisperTurboId
   }
 }
@@ -114,6 +118,7 @@ export function coercePrefs(raw: unknown, platform: NodeJS.Platform | string): P
     [PrefKey.maxDurationMinutes]: readMaxDurationMinutes(r[PrefKey.maxDurationMinutes]),
     [PrefKey.shortcut]: migratedShortcut(r[PrefKey.shortcut], hasOtherPrefs, platform),
     [PrefKey.hardware]: hardware,
-    [PrefKey.speechModel]: speechModel
+    [PrefKey.speechModel]: speechModel,
+    [PrefKey.liveTranscription]: bool(PrefKey.liveTranscription, d[PrefKey.liveTranscription])
   }
 }
