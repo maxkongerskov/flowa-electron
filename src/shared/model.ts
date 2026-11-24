@@ -20,7 +20,7 @@ export interface GgmlWeights {
   approxBytes: number
 }
 
-/** Default model. SHA-1 from whisper.cpp v1.9.5 models/README.md. */
+/** Default model. SHA-1 from whisper.cpp v1.9.6 models/README.md. */
 export const ggmlModel: GgmlWeights = {
   fileName: 'ggml-large-v3-turbo.bin',
   url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin',
@@ -30,7 +30,7 @@ export const ggmlModel: GgmlWeights = {
 
 /**
  * OpenAI Whisper small, multilingual (not small.en). Same ggml f16 conversion
- * whisper.cpp publishes. SHA-1 from whisper.cpp v1.9.5 models/README.md.
+ * whisper.cpp publishes. SHA-1 from whisper.cpp v1.9.6 models/README.md.
  * 487,601,967 bytes on Hugging Face.
  */
 export const ggmlSmall: GgmlWeights = {
@@ -63,7 +63,7 @@ export function modelOverridePath(env: NodeJS.ProcessEnv, weightsFileName: strin
 }
 
 /** Pinned whisper.cpp release that the setup script builds. */
-export const whisperCppTag = 'v1.9.5'
+export const whisperCppTag = 'v1.9.6'
 
 /**
  * WhisperKit 0.18.0 DecodingOptions() defaults used by Swift Flowa
@@ -107,7 +107,7 @@ export function serverArgs(modelPath: string, port: number, threads: number, use
     '-t', String(threads),
     '-bs', String(decoding.beamSize),
     '-bo', String(decoding.bestOf),
-    // whisper-server v1.9.5 has no -tp/-tpi flags (it exits on unknown args);
+    // whisper-server v1.9.6 has no -tp/-tpi flags (it exits on unknown args);
     // temperature + temperature_inc are sent per request in inferenceFields().
     '-et', String(decoding.entropyThreshold),
     '-lpt', String(decoding.logprobThreshold),

@@ -8,7 +8,7 @@ press it again, and the text is pasted wherever your cursor is.
 - **Runs locally.** Speech recognition runs on your own computer with
   [whisper.cpp](https://github.com/ggml-org/whisper.cpp) and OpenAI's Whisper models. Your audio
   and your text never leave the machine. There is no cloud service and no telemetry.
-- **Built with** Electron, React and TypeScript, with whisper.cpp v1.9.5 as the speech engine.
+- **Built with** Electron, React and TypeScript, with whisper.cpp v1.9.6 as the speech engine.
 
 Flowa started as a Swift app for macOS and was made in Denmark. This repository is the
 cross-platform Electron version.
@@ -172,7 +172,7 @@ git clone https://github.com/maxkongerskov/flowa-electron.git
 cd flowa-electron
 npm ci                      # installs dependencies and fetches the Electron binary (postinstall)
 npm run setup:mac-helper    # macOS only: builds resources/mac/flowa-helper (fn key + paste)
-npm run setup:whisper       # builds whisper.cpp v1.9.5 into resources/bin/<platform>-<arch>/
+npm run setup:whisper       # builds whisper.cpp v1.9.6 into resources/bin/<platform>-<arch>/
 npm run setup:model         # downloads ggml-large-v3-turbo.bin (~1.6 GB, SHA-1 checked) into models/
 npm run setup:small         # optional: ggml-small.bin (~466 MB) into models/
 npm start                   # builds and runs the app

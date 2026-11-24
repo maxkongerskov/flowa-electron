@@ -1,4 +1,4 @@
-# Builds whisper.cpp v1.9.5 (d1be6fde11ac6e0407606b4e42fe72d34add8037) with
+# Builds whisper.cpp v1.9.6 (96ec4d9823e9d0211944172da35f9f29134af990) with
 # -DGGML_VULKAN=ON for Windows x64 and Linux x64. Artifacts are the
 # whisper-server-vulkan/ trees npm run release copies into resources/bin.
 # This workflow does not tag, does not publish a GitHub Release, and does not

@@ -15,8 +15,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 
-const TAG = 'v1.9.5' // keep in sync with src/shared/model.ts → whisperCppTag
-const COMMIT = 'd1be6fde11ac6e0407606b4e42fe72d34add8037' // v1.9.5
+const TAG = 'v1.9.6' // keep in sync with src/shared/model.ts → whisperCppTag
+const COMMIT = '96ec4d9823e9d0211944172da35f9f29134af990' // v1.9.6
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..')
 const src = path.join(root, 'vendor', 'whisper.cpp')
 const buildDir = path.join(src, 'build-flowa')
@@ -68,7 +68,7 @@ const flags = [
 if (wantMetal) flags.push('-DGGML_METAL=ON', '-DGGML_METAL_EMBED_LIBRARY=ON', '-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0')
 if (wantVulkan) flags.push('-DGGML_VULKAN=ON')
 // Ubuntu 22.04's libvulkan-dev headers stop at 1.3.204 and fail to compile
-// v1.9.5 (LayerSettingEXT, eMesaDozen, device-fault EXT). When VULKAN_SDK is
+// v1.9.5+ (LayerSettingEXT, eMesaDozen, device-fault EXT). When VULKAN_SDK is
 // set, force those headers. A stale CMake cache otherwise keeps /usr/include.
 if (wantVulkan && process.env.VULKAN_SDK) {
   const include = path.join(process.env.VULKAN_SDK, 'include')
@@ -78,7 +78,7 @@ if (wantVulkan && process.env.VULKAN_SDK) {
   flags.push(`-DVulkan_INCLUDE_DIR=${include}`)
   if (process.platform !== 'win32') flags.push(`-DCMAKE_CXX_FLAGS=-I${include}`)
 } else if (wantVulkan && process.platform === 'linux') {
-  throw new Error('Linux Vulkan builds need VULKAN_SDK (Ubuntu 22.04 libvulkan-dev headers are too old for whisper.cpp v1.9.5).')
+  throw new Error(`Linux Vulkan builds need VULKAN_SDK (Ubuntu 22.04 libvulkan-dev headers are too old for whisper.cpp ${TAG}).`)
 }
 if (wantCuda) flags.push('-DGGML_CUDA=ON')
 if (process.platform !== 'darwin') flags.push('-DGGML_NATIVE=OFF') // portable binaries for distribution
