@@ -25,7 +25,7 @@ describe('model parity', () => {
     expect(a[a.indexOf('--host') + 1]).toBe('127.0.0.1')
     expect(a).toContain('-bs')
   })
-  it('server args only use flags whisper-server v1.9.5 accepts (it exits on unknown args)', () => {
+  it('server args only use flags whisper-server v1.9.6 accepts (it exits on unknown args)', () => {
     const supported = new Set(['-m', '--host', '--port', '-t', '-bs', '-bo', '-et', '-lpt', '-nth', '-l', '-ng', '-fa', '-nfa'])
     const flags = serverArgs('/m.bin', 1234, 4).filter((x) => /^--?[a-z]/.test(x))
     for (const f of flags) expect(supported.has(f), f).toBe(true)

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Packages for a whisper.cpp v1.9.5 Vulkan build on Ubuntu 22.04.
+# Packages for a whisper.cpp v1.9.5+ Vulkan build on Ubuntu 22.04.
 # CMake 3.22 cannot find Vulkan's glslc component (that landed in 3.24).
 # glslc and the Vulkan headers come from the pinned LunarG SDK. The workflow
 # exports VULKAN_SDK=/opt/vulkan-sdk so CMake does not use Ubuntu 22.04's
@@ -19,7 +19,7 @@ if ! /opt/cmake/bin/cmake --version >/dev/null 2>&1; then
   tar -xzf /tmp/cmake.tgz -C /opt/cmake --strip-components=1
 fi
 
-# Ubuntu 22.04's libvulkan-dev headers are too old for whisper.cpp v1.9.5
+# Ubuntu 22.04's libvulkan-dev headers are too old for whisper.cpp v1.9.5+
 # (missing LayerSettingEXT and DriverId::eMesaDozen). Compile against the
 # pinned SDK headers. The finished engine is patched to RUNPATH $ORIGIN and
 # is not shipped with the SDK's libvulkan; at runtime it loads the system loader.

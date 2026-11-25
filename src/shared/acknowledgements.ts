@@ -1,6 +1,6 @@
 // Notices for the Acknowledgements sheet. Copyright lines follow each project's
 // own license file. The C and C++ components are the copies compiled into
-// whisper.cpp v1.9.5.
+// whisper.cpp v1.9.6.
 
 export interface Acknowledgement {
   name: string

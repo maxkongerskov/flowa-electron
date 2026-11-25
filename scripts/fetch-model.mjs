@@ -11,7 +11,7 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
-// SHA-1 values match whisper.cpp v1.9.5 models/README.md and src/shared/model.ts.
+// SHA-1 values match whisper.cpp v1.9.6 models/README.md and src/shared/model.ts.
 const MODELS = {
   turbo: {
     file: 'ggml-large-v3-turbo.bin',

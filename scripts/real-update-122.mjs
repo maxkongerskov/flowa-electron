@@ -1,13 +1,14 @@
 #!/usr/bin/env node
-// Install the published Flowa 1.2.2 and update it to the 1.2.3 built in this
-// checkout. The feed is a local HTTP server. The installed 1.2.2 copy is
+// Install a published Flowa (1.2.2 by default, REAL_UPDATE_FROM=1.2.4 for the
+// newer one) and update it to the version in this checkout's package.json.
+// The feed is a local HTTP server. The installed copy is
 // pointed at that server by editing its app-update.yml and the setFeedURL
 // call inside that install's app.asar. Shipped source is not changed.
 //
 // The published installers include the speech model (~2 GB). Their sha256 is
 // checked before anything is modified. The model and engine are then removed
 // from the installed copy so startup does not load or re-download them. The
-// 1.2.3 package is the default electron-builder config: no speech model.
+// target package is the default electron-builder config: no speech model.
 //
 //   node scripts/real-update-122.mjs
 //   FLOWA_UPDATE_KEY=~/.config/flowa/update-private.pem node scripts/real-update-122.mjs serve-mac --dir feed --arch arm64
@@ -29,8 +30,24 @@ import { generateUpdateKeyPair } from './update-trust.mjs'
 
 const require = createRequire(import.meta.url)
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const FROM_TAG = 'v1.2.2'
-const TO = '1.2.3'
+// Published installers this test can start from. sha256 values are the
+// GitHub release asset digests.
+const RELEASES = {
+  '1.2.2': {
+    appimage: { name: 'Flowa-1.2.2.AppImage', sha256: 'bf0d3ce4c50e2e81309009bb9fd115b8ffade702ccce6f5266bdf647b5cce254' },
+    deb: { name: 'flowa_1.2.2_amd64.deb', sha256: '5d6063e0b8dd45a91a186888bbf30b9d188919265c9cb1eff51b2b37167bd3b4' },
+    nsis: { name: 'Flowa-Setup-1.2.2-x64.exe', sha256: '2b66f1562896650a61294a40f9a6806b2d106478ce8c131012128564c9667749' }
+  },
+  '1.2.4': {
+    appimage: { name: 'Flowa-1.2.4.AppImage', sha256: '3eb310edac84ec7e72d4ce505aa62247b179404560b1a6531d971a9d7c94adbb' },
+    deb: { name: 'flowa_1.2.4_amd64.deb', sha256: 'ab16993818c4af1eb6221c89eb2bddfce2d5e5f90d80bf3103a85ff10e6fa849' },
+    nsis: { name: 'Flowa-Setup-1.2.4-x64.exe', sha256: '2e3fcccc106f80148ab6383dc659cd342ca6ccbec4bf3a2464ef476c83efcfbe' }
+  }
+}
+const FROM = process.env.REAL_UPDATE_FROM?.trim() || '1.2.2'
+const FROM_TAG = `v${FROM}`
+// The target is whatever this checkout builds.
+const TO = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')).version
 const RELEASE_BASE = `https://github.com/maxkongerskov/flowa-electron/releases/download/${FROM_TAG}`
 const HISTORY_TEXT = 'bridge-history-1.2.2-token'
 // Home rewrites a saved microphone id that is not a visible audio device to
@@ -39,20 +56,7 @@ const HISTORY_TEXT = 'bridge-history-1.2.2-token'
 const MIC = 'default'
 const LANG = 'da'
 
-const ASSETS = {
-  appimage: {
-    name: 'Flowa-1.2.2.AppImage',
-    sha256: 'bf0d3ce4c50e2e81309009bb9fd115b8ffade702ccce6f5266bdf647b5cce254'
-  },
-  deb: {
-    name: 'flowa_1.2.2_amd64.deb',
-    sha256: '5d6063e0b8dd45a91a186888bbf30b9d188919265c9cb1eff51b2b37167bd3b4'
-  },
-  nsis: {
-    name: 'Flowa-Setup-1.2.2-x64.exe',
-    sha256: '2b66f1562896650a61294a40f9a6806b2d106478ce8c131012128564c9667749'
-  }
-}
+const ASSETS = RELEASES[FROM]
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -262,7 +266,7 @@ function assertUserData(dir) {
   if (prefs['flowa.hardware'] !== 'gpu') throw new Error(`hardware changed to ${prefs['flowa.hardware']}`)
   const recent = JSON.parse(readFileSync(path.join(dir, 'recent.json'), 'utf8'))
   if (!Array.isArray(recent) || !recent.some((item) => item && item.text === HISTORY_TEXT)) {
-    throw new Error('1.2.2 history text is missing after the update')
+    throw new Error(`${FROM} history text is missing after the update`)
   }
 }
 
@@ -345,13 +349,13 @@ async function waitForUpdate(state, logFile, timeoutMs) {
     if (text.includes('rejected update signature') || text.includes('update download failed')) {
       throw new Error(`update failed\n${text.slice(-4000)}`)
     }
-    if (state.exitCode !== null && !text.includes('update available: 1.2.3')) {
-      throw new Error(`1.2.2 exited ${state.exitCode} before offering 1.2.3\n${text.slice(-4000)}`)
+    if (state.exitCode !== null && !text.includes(`update available: ${TO}`)) {
+      throw new Error(`${FROM} exited ${state.exitCode} before offering ${TO}\n${text.slice(-4000)}`)
     }
-    if (text.includes('update available: 1.2.3') && state.exitCode !== null) return text
+    if (text.includes(`update available: ${TO}`) && state.exitCode !== null) return text
     await delay(500)
   }
-  throw new Error(`timed out waiting for 1.2.2 to install 1.2.3\n${readLog(logFile).slice(-4000)}`)
+  throw new Error(`timed out waiting for ${FROM} to install ${TO}\n${readLog(logFile).slice(-4000)}`)
 }
 
 async function waitForLines(logFile, lines, timeoutMs) {
@@ -388,7 +392,7 @@ function lighten(resourcesDir) {
     const target = path.join(resourcesDir, name)
     if (!existsSync(target)) continue
     rmSync(target, { recursive: true, force: true })
-    console.log(`removed installed ${name} so 1.2.2 does not load the bundled model`)
+    console.log(`removed installed ${name} so ${FROM} does not load the bundled model`)
   }
 }
 
@@ -397,7 +401,7 @@ function lightenSudo(resourcesDir) {
     const target = path.join(resourcesDir, name)
     const result = spawnSync('sudo', ['-n', 'rm', '-rf', target], { stdio: 'inherit' })
     if (result.status !== 0) throw new Error(`could not remove ${target}`)
-    console.log(`removed installed ${name} so 1.2.2 does not load the bundled model`)
+    console.log(`removed installed ${name} so ${FROM} does not load the bundled model`)
   }
 }
 
@@ -480,24 +484,24 @@ async function exercise(label, spec) {
   killProduct()
   const logFile = path.join(spec.work, 'update.log')
   rmSync(logFile, { force: true })
-  console.log(`▶ ${label}: launch installed 1.2.2`)
+  console.log(`▶ ${label}: launch installed ${FROM}`)
   const state = spawnLogged(spec.command, spec.args, env, logFile)
   try {
     await waitForUpdate(state, logFile, 12 * 60 * 1000)
   } finally {
     stopTree(state)
   }
-  console.log(`▶ ${label}: check installed 1.2.3`)
+  console.log(`▶ ${label}: check installed ${TO}`)
   await spec.versionCheck()
   killProduct()
   await delay(1000)
   const observeLog = path.join(spec.work, 'observe.log')
   rmSync(observeLog, { force: true })
   const observeEnv = { ...base, ...(spec.observeEnv ?? spec.envExtra ?? {}) }
-  console.log(`▶ ${label}: restart 1.2.3`)
+  console.log(`▶ ${label}: restart ${TO}`)
   const observed = spawnLogged(spec.observeCommand, spec.observeArgs, observeEnv, observeLog)
   try {
-    const text = await waitForLines(observeLog, ['[Flowa] version 1.2.3', 'speech plan: backend=cpu'], 90_000)
+    const text = await waitForLines(observeLog, [`[Flowa] version ${TO}`, 'speech plan: backend=cpu'], 90_000)
     if (/speech plan: backend=(vulkan|cuda|metal)/.test(text)) {
       throw new Error(`runner selected a GPU backend\n${text.slice(-2000)}`)
     }
@@ -514,10 +518,10 @@ function canSudo() {
 async function runAppImage(work, built, display) {
   const downloaded = path.join(work, ASSETS.appimage.name)
   await downloadAsset(ASSETS.appimage, downloaded)
-  const patched = path.join(work, 'Flowa-1.2.2.AppImage')
+  const patched = path.join(work, `Flowa-${FROM}.AppImage`)
   const { server, url, publicKey } = await publishFeed(work, built)
   try {
-    console.log('▶ AppImage: repack published 1.2.2 without the model, with the local feed')
+    console.log(`▶ AppImage: repack published ${FROM} without the model, with the local feed`)
     await repackAppImage(downloaded, patched, async (tree) => {
       const resources = findResources(tree)
       lighten(resources)
@@ -553,7 +557,7 @@ async function runDeb(work, built, display) {
   const sudoBin = passwordlessPkexecDir(path.join(work, 'sudo-bin'))
   try {
     spawnSync('sudo', ['-n', 'apt-get', 'remove', '-y', 'flowa'], { stdio: 'inherit' })
-    console.log('▶ deb: install published 1.2.2')
+    console.log(`▶ deb: install published ${FROM}`)
     const installed = spawnSync('sudo', ['-n', 'apt-get', 'install', '-y', downloaded], { cwd: root, stdio: 'inherit' })
     if (installed.status !== 0) throw new Error(`apt install exited ${installed.status}`)
     rmSync(downloaded, { force: true })
@@ -602,7 +606,7 @@ async function runNsis(work, built) {
       const uninstaller = path.win32.join(path.win32.dirname(candidate), 'Uninstall Flowa.exe')
       if (existsSync(uninstaller)) spawnSync(uninstaller, ['/S'], { stdio: 'inherit' })
     }
-    console.log('▶ NSIS: install published 1.2.2')
+    console.log(`▶ NSIS: install published ${FROM}`)
     const installed = spawnSync(downloaded, windowsInstallerArgs(), { cwd: root, stdio: 'inherit' })
     if (installed.status !== 0) throw new Error(`NSIS install exited ${installed.status}`)
     const started = Date.now()
@@ -676,11 +680,11 @@ async function main() {
     await serveMac()
     return
   }
-  const version = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')).version
-  if (version !== TO) throw new Error(`package.json is ${version}, expected ${TO}`)
+  if (!ASSETS) throw new Error(`REAL_UPDATE_FROM=${FROM} is not one of ${Object.keys(RELEASES).join(', ')}`)
+  if (FROM === TO) throw new Error(`package.json is ${TO}, the same version as the published ${FROM_TAG}`)
   const targets = targetsForPlatform()
   const work = mkdtempSync(path.join(os.tmpdir(), 'flowa-real-122-'))
-  console.log(`real 1.2.2 work dir ${work}`)
+  console.log(`real ${FROM} → ${TO} work dir ${work}`)
   const outDir = path.join(work, 'built')
   if (process.platform === 'linux') await buildSlim(outDir, ['--linux', 'AppImage', 'deb', '--x64'])
   else await buildSlim(outDir, ['--win', 'nsis', '--x64'])
