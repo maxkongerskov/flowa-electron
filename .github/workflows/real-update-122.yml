@@ -1,10 +1,15 @@
-# Install the published v1.2.2 artifacts and update them to this branch's 1.2.3.
+# Install published artifacts (v1.2.2 on pull requests; pick another with the
+# workflow_dispatch input) and update them to this branch's package.json version.
 # The feed is local. The installed copy's app-update.yml is edited in the
 # test; shipped source is not. Mac arm64 and x64 are manual (RELEASING.md).
 name: Real 1.2.2 update
 
 on:
   workflow_dispatch:
+    inputs:
+      from:
+        description: Published version to update from (1.2.2 or 1.2.4)
+        default: '1.2.2'
   pull_request:
 
 permissions:
@@ -24,11 +29,12 @@ jobs:
       - name: Display, AppImage, and squashfs tools
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb libfuse2 squashfs-tools
       - run: npm ci
-      - name: Update published 1.2.2 AppImage and deb
+      - name: Update published AppImage and deb
         run: node scripts/real-update-122.mjs
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
           REAL_UPDATE_TARGETS: appimage,deb
+          REAL_UPDATE_FROM: ${{ inputs.from || '1.2.2' }}
 
   windows:
     name: Windows NSIS
@@ -41,7 +47,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Update published 1.2.2 NSIS
+      - name: Update published NSIS
         run: node scripts/real-update-122.mjs
         env:
           REAL_UPDATE_TARGETS: nsis
+          REAL_UPDATE_FROM: ${{ inputs.from || '1.2.2' }}
